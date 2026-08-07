@@ -1,306 +1,473 @@
 ---
 type: Implementation Plan
-title: 'WIP: Renderer-agnostic core and engine integration boundary'
-description: WIP plan for portable text-generation, raster-technique, GPU-authoring, and game-engine seams that do not couple core to one engine.
-tags: [architecture, rendering, game-engines, typegpu, threejs, raster, packages, wip]
+title: Renderer-neutral core and engine integration
+description: Implementation and proof plan for technique-declared paragraph batches, ordered font stacks, synchronized updates, core-owned glyph batching, and thin engine targets.
+documentation_type: explanation
+tags: [planning, api, shaping, batching, threejs, typegpu, wayfare]
 status: draft
 sources:
-  - id: current-text
-    resource: ../../packages/text/src/text.ts
-    title: Current Three.js Text host
-  - id: current-raster
-    resource: ../../packages/text/src/raster.ts
-    title: Current raster capability and transaction contracts
-  - id: bitmap-adapter
-    resource: ../../packages/text/src/raster/bitmap.ts
-    title: Current Bitmap Three.js and TSL implementation
-  - id: bitmap-baker
-    resource: ../../packages/text/src/bakers/bitmap.ts
-    title: Current renderer-independent Bitmap baker
+  - id: core-api
+    resource: core-api.md
+    title: Canonical core text API
+  - id: engine-contract
+    resource: engine-integration-contract.md
+    title: Engine integration contract
+  - id: raster-technique
+    resource: raster-technique-api.md
+    title: Raster technique and engine resource API
+  - id: three-api
+    resource: three-api.md
+    title: Three.js text API
+  - id: typegpu-api
+    resource: typegpu-api.md
+    title: TypeGPU raster programs and text engine
+  - id: gpucat-integration
+    resource: gpucat-integration.md
+    title: External gpucat integration fitness plan
   - id: roadmap
     resource: ../roadmap/roadmap.md
-    title: Canonical implementation roadmap
-  - id: typegpu-scope
-    resource: https://docs.swmansion.com/TypeGPU/why-typegpu/
-    title: Why TypeGPU?
-  - id: typegpu-three
-    resource: https://docs.swmansion.com/TypeGPU/ecosystem/typegpu-three/
-    title: TypeGPU integration with Three.js and TSL
-  - id: typegpu-webgpu
-    resource: https://docs.swmansion.com/TypeGPU/integration/webgpu-interoperability/
-    title: TypeGPU WebGPU interoperability
+    title: Canonical implementation order
+  - id: decision-register
+    resource: decision-register.md
+    title: Architectural decisions
+  - id: current-api
+    resource: api-shapes.md
+    title: Existing API migration fixture
+  - id: wayfare
+    resource: https://github.com/iwoplaza/wayfare
+    title: Wayfare engine proof target
+  - id: typegpu-shader-canvas
+    resource: https://github.com/AlexJWayne/typegpu-shader-canvas
+    title: Raw TypeGPU proof target
 generated:
   by: openai-codex/gpt-5.6
-  at: '2026-08-05T14:29:49Z'
+  at: '2026-08-07T03:25:58Z'
 ---
 
-# WIP: Renderer-agnostic core and engine integration boundary
+# Renderer-neutral core and engine integration
 
-Status: **work in progress**. This draft proposes the next additive milestone; it does not define a published API, authorize
-implementation, or change the canonical roadmap order.
+## Outcome
 
-## Decision sought
+Replace the current one-Three-object/one-paragraph ownership model with this pipeline:
 
-Make the reusable center of `@pmndrs/text` independent of Three.js, TSL, TypeGPU, React, and any scene graph. Keep Bitmap, MSDF, and Slug artifact contracts and bakers as first-party portable techniques. Move scene attachment, transforms, sorting, GPU residency, draw submission, and frame-boundary publication into explicit engine integrations.
-
-The plan must prove two independent forms of portability:
-
-1. one engine can use more than one GPU-authoring layer, beginning with **Three.js + TSL** and **Three.js + TypeGPU**;
-2. one portable text-generation and raster contract can drive more than one engine host, including at least one host that does not use Three.js.
-
-## Corrected terminology
-
-“Framework” is too ambiguous for this boundary. The architecture has three orthogonal axes:
-
-| Axis                     | Responsibility                                                                                                                        | Examples                                                               |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Engine or rendering host | Scene ownership, transforms, cameras, visibility, ordering, batching policy, render passes, frame scheduling, device/canvas lifecycle | Three.js, Babylon.js, PlayCanvas, PixiJS, a custom game engine         |
-| GPU-authoring layer      | Typed resources, bindings, shader composition, pipeline construction, raw GPU interoperability                                        | TSL, TypeGPU, WGSL/WebGPU                                              |
-| Application binding      | Reconcile application state into an engine-owned text instance                                                                        | Imperative code, React Three Fiber, another engine-specific reconciler |
-
-React, Vue, and similar UI frameworks are not the portability target. They may wrap an engine integration, but they do not define the rendering boundary.
-
-## What TypeGPU is and is not
-
-TypeGPU is a typed, modular abstraction over WebGPU resources, bindings, pipelines, and shader programs. Its documentation explicitly positions it as building blocks for a framework, a custom renderer, GPU computation, or incremental use inside another solution—not as a scene graph or complete rendering engine.[^typegpu-scope]
-
-Without Three.js or another engine, an application using TypeGPU still needs something to own:
-
-- cameras, transforms, bounds, and visibility;
-- scene or world traversal;
-- transparent and opaque ordering;
-- batch construction and draw submission;
-- render-pass and target orchestration;
-- frame scheduling and presentation;
-- canvas, adapter, device, and loss recovery.
-
-That “something” may be a full game engine, a small purpose-built renderer, or a toolkit built on TypeGPU. TypeGPU can also participate inside Three.js through `@typegpu/three`, translating TypeGPU functions into TSL nodes. That path currently requires WebGPU and does not preserve Three.js's WebGL fallback.[^typegpu-three]
-
-TypeGPU therefore belongs on the GPU-authoring axis. It is not inherently a peer of Three.js on the engine axis.
-
-## Target dependency direction
-
-```mermaid
-flowchart TD
-  App["Application"] --> Binding["Optional application binding"]
-  Binding --> Engine["Engine integration"]
-  App --> Engine
-
-  Engine --> Runtime["Portable text-generation state machine\nname not yet accepted"]
-  Engine --> Technique["Portable raster technique"]
-  Engine --> GPU["GPU-authoring adapter"]
-
-  Runtime --> Font["Font registry + HarfRust shaping"]
-  Runtime --> Paragraph["Paragraph layout + paint"]
-  Runtime --> Technique
-
-  Technique --> Contract["Descriptor + artifact data contract"]
-  Technique -. "lazy import" .-> Baker["Optional runtime baker"]
-
-  GPU --> TSL["TSL"]
-  GPU --> TypeGPU["TypeGPU"]
-  GPU --> Raw["Raw WGSL / WebGPU"]
-
-  Engine --> Three["Three.js host"]
-  Engine --> Other["Other game engine"]
-  Engine --> Custom["Custom renderer"]
+```ts
+LoadedFont[]
+  -> Font | FontStack            // one logical font selection
+  -> ParagraphBatch[]            // application-declared render phases
+  -> Paragraph handles           // desired-state mutation
+  -> TextRuntime.update*()       // one synchronization point
+  -> PreparedGlyphBatch[]        // core partitions and packs
+  -> PreparedGlyphRun[]          // core preserves order and resolved variants
+  -> engine target               // storage, compatible draws, transform, submit
 ```
 
-Imports point downward only. The portable runtime and technique contracts must have no type or runtime edge to an engine, GPU-authoring library, or application reconciler.
+The [core API](core-api.md) is the public authority. The [engine contract](engine-integration-contract.md) is the exact
+integration boundary. This document owns implementation order and proof.
 
-## Proposed capability boundaries
+## Settled invariants
 
-### Portable text generation
+```ts
+const Invariants = {
+  explicitBakeAndLoad: true,
+  everyTextUnitIsAParagraph: true,
+  fontStackMayResolveThroughMultipleFonts: true,
+  paragraphBatchDeclaresOneTechnique: true,
+  oneParagraphBatchIsOneIntentionalRenderPhase: true,
+  oneParagraphBatchMayProduceManyGlyphBatchesAndRuns: true,
+  paragraphHandlesOwnDesiredStateMutation: true,
+  runtimeUpdateIsTheSynchronizationPoint: true,
+  syncOrAsyncIsChosenPerUpdate: true,
+  coreOwnsSortingPartitioningPackingAndDirtyRanges: true,
+  coreRetainsCanonicalCpuInstanceStorage: true,
+  coreVariantsAreOpaqueRenderIntent: true,
+  rasterArtifactsAndCpuDataAreEngineNeutral: true,
+  engineTargetsRealizeGpuResources: true,
+  targetsOwnTransformsGpuLifetimeAndSceneComposition: true,
+} as const;
+```
 
-Own the behavior currently embedded in the Three.js `Text` object that is independent of `Object3D`:
+The following shapes are rejected:
 
-- normalized text, spans, shaping, layout, and paint properties;
-- cold preparation and warm invalidation classification;
-- cancellation and stale-generation rejection;
-- retained current generation and fully prepared replacement;
-- readiness and failure state;
-- deterministic resource retention and disposal policy;
-- publication eligibility, without choosing an engine frame hook.
+```ts
+const Rejected = {
+  separatePublicParagraphEngine: true,
+  labelsOrIconsAsDifferentTextKinds: true,
+  runtimeWideSyncOrWorkerMode: true,
+  editCallbackPassedToUpdate: true,
+  fontStackContainingSeveralTechniques: true,
+  logicalMixedTechniqueBatchRepartitionedByEveryRenderer: true,
+  rendererOwnedShapingOrResourcePartitioning: true,
+  targetOwnedCanonicalGlyphStorage: true,
+} as const;
+```
 
-Do not accept `TextController` as the API name. During planning, call this the **portable text-generation state machine**. Name it only after the non-Three proof establishes whether consumers experience it as a runtime, instance, model, pipeline, or another abstraction.
+## Why each public object exists
 
-### Portable raster technique
+### `TextRuntime`
 
-Bitmap, MSDF, and Slug each own a canonical, renderer-independent technique capability:
+Owns loaded-font identity, the synchronous shaper, optional asynchronous executor, dirty paragraph registry, cross-batch
+shape aggregation, revision numbers, supersession, and atomic publication.
 
-- literal kind, extension, version, and descriptor normalization;
-- raster identity and artifact records;
-- hostile-input validation and portable decoded views;
-- optional offline and runtime baker capabilities;
-- coverage and missing-glyph rules;
-- portable resource and payload accounting.
+```ts
+paragraphA.text = nextA;
+paragraphB.contentBox = nextB;
+runtime.update();
+```
 
-The artifact contract and baker are tightly coupled and should remain versioned as one first-party technique. The baker implementation must remain independently importable and dynamically loadable. “First-party core concern” does not mean “eager root-bundle dependency.”
+Both paragraphs shape at one synchronization point even when they belong to different paragraph render phases.
 
-### Engine integration
+### `FontStack`
 
-An engine integration owns host concepts:
+Defines one immutable logical font selection. Its first concrete font is primary and later fonts resolve missing glyphs in
+order. Every concrete font must use the same technique. A single `LoadedFont` already satisfies the same selection contract.
 
-- transform and hierarchy attachment;
-- camera and viewport inputs;
-- render order and draw-local ordering;
-- engine-native object identity;
-- frame-boundary publication of a prepared generation;
-- scene removal and device-loss cleanup;
-- integration-specific retained batch updates.
+```ts
+const uiFont = createFontStack(interMtsdf, notoMtsdf, amiriMtsdf);
+```
 
-The engine interface receives opaque, portable generation and technique data. It must not reshape text, redefine artifact identity, or own baker policy.
+Different font resources may still require different glyph buffers and submits. Core produces those divisions.
 
-### GPU-authoring adapter
+### `ParagraphBatch`
 
-GPU code is separable from engine ownership where the host allows it:
+Declares where the application permits core to order and submit text together. It is not a promise of one draw.
 
-- resource and pipeline creation;
-- vertex/instance storage layouts;
-- bind groups, textures, and samplers;
-- shader implementation and composition;
-- dirty-range upload and draw encoding;
-- GPU resource disposal.
+```ts
+const worldText = runtime.createParagraphBatch({ technique: mtsdf });
+const overlayText = runtime.createParagraphBatch({ technique: mtsdf });
+```
 
-For Three.js, TSL remains the existing cross-WebGPU/WebGL implementation. A Three.js + TypeGPU proof uses `@typegpu/three` and is WebGPU-only unless that integration gains a WebGL path. A non-Three TypeGPU proof uses TypeGPU resources and pipelines directly or through the selected engine's supported integration.
+Core does not merge these phases. The engine may place particles, meshes, post-processing, or UI work between them.
 
-### Application binding
+### `Paragraph`
 
-React Three Fiber and any later bindings remain thin engine-specific adapters. They may own Suspense, transitions, prop reconciliation, invalidation, and component disposal, but they do not become the portable engine API.
+Owns one desired text/layout/paint state and one stable identity. A multiline block, one-line label, and font-backed icon are
+all paragraphs.
 
-## Package and export strategy
+```ts
+paragraph.text = nextText;
+paragraph.contentBox = nextBox;
+paragraph.paint = nextPaint;
+```
 
-Exact names remain provisional. The dependency boundaries should be testable regardless of whether they ship as subpath exports or separate workspace packages.
+Repeated setters before the next runtime update coalesce naturally.
 
-| Candidate surface                       | Purpose                                                                                     | Loading rule                                                   |
-| --------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `@pmndrs/text`                          | Portable font, shaping, paragraph, paint, generation, and shared capability contracts       | Browser-safe base graph; no engine or GPU-authoring dependency |
-| `@pmndrs/text/bitmap`, `/msdf`, `/slug` | Portable first-party technique contracts, validators, decoded views, and lazy baker loaders | Baker Wasm and workers remain behind `import()`                |
-| `@pmndrs/text/three`                    | Three.js text host and engine lifecycle                                                     | Imports Three.js, not React                                    |
-| `@pmndrs/text/three/tsl/*`              | Existing Bitmap, MSDF, and Slug GPU implementations                                         | Keeps WebGPU and WebGL behavior                                |
-| `@pmndrs/text/three/typegpu/*`          | TypeGPU-authored Three.js shader implementations or bridges                                 | WebGPU-only unless proven otherwise                            |
-| separate non-Three integration package  | Selected game-engine or custom-renderer proof                                               | Imports public portable surfaces only                          |
-| `@pmndrs/text/react-three-fiber`        | React binding over the Three.js host                                                        | Imports R3F and the Three.js integration                       |
+### `PreparedGlyphBatch` and `PreparedGlyphRun`
 
-One ergonomic technique export may compose contract, renderer adapter, and lazy baker loader. Composition must not erase the internal dependency boundaries or pull baker code into the initial bundle.
+These are the concrete rendering outputs. Core groups compatible glyph instances into stable storage and separately emits
+the ordered variant-bearing ranges the integration compiles into draws.
 
-## Proposed milestone slices
+```ts
+for (const batch of revision.glyphBatches) {
+  upload(isAdjacentTargetRevision ? batch.dirtyRanges : liveSubmissionRanges(batch.key));
+}
+for (const draw of program.compileRuns(revision.glyphRuns)) draw(draw);
+```
 
-### 11.1 — accept the boundary and proof matrix
+## Ownership boundary
 
-- inventory every Three.js, TSL, React, DOM, canvas, and GPU type reachable from current public and internal contracts;
-- classify each responsibility as portable generation, technique, engine, GPU-authoring, or application binding;
-- record accepted dependency rules and provisional package surfaces;
-- add import-graph and type-level fixtures that can fail before code moves;
-- capture current artifact identity, bundle, visual, lifecycle, and performance baselines.
+| Layer               | Owns                                                                                                                |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Baking              | reduced font data, glyph records, technique artifacts, deterministic packaging                                      |
+| Loading             | validation, decoding, registered font and technique identity                                                        |
+| Text runtime        | dirty aggregation, sync/async scheduling, shaping calls, supersession, atomic publication                           |
+| Font stack          | one immutable ordered missing-glyph policy over same-technique concrete fonts                                       |
+| Paragraph batch     | declared technique, application render phase, capacity policy, paragraph order domain                               |
+| Paragraph           | batch-owned handle, font leases, desired source, spans, content box, style, paint, order, glyph-origin overrides    |
+| Core batch compiler | fallback runs, layout, resource partitioning, stable slots, canonical CPU instances, dirty ranges, ordered variants |
+| Technique           | artifact decoding, resource selection/bindings, canonical instance schema and writing, data meaning                 |
+| Raster shader       | reusable backend implementation of canonical Bitmap, MTSDF, or Slug evaluation                                      |
+| Raster program      | shader composition, variant compatibility, resources, pipelines, and final draw compilation                         |
+| Engine target       | engine buffers, dirty-range synchronization, transforms, visibility, pass placement, encoding, retirement           |
 
-Exit: the maintainer accepts the terminology, dependency direction, proof hosts, and non-goals. No implementation name is accepted without evidence from a second host.
+## Current system versus target
 
-### 11.2 — separate portable technique data from renderer resources
+| Merged v0 behavior                                                       | Target v1 behavior                                                                              |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `Text` combines paragraph, raster, and Three ownership                   | Paragraph state and batch compilation live in core; Three is one target                         |
+| Property changes can prepare one `Text` immediately                      | Handle setters only mark desired state dirty                                                    |
+| Async behavior follows object/runtime lifecycle                          | Every synchronization chooses `update()` or `updateAsync()`                                     |
+| One paragraph stages one raster-owned Three draw object                  | One paragraph batch produces resource-compatible storage and ordered variant-bearing glyph runs |
+| Renderer raster modules decide glyph grouping                            | Core and technique modules decide grouping and populate canonical CPU instance storage          |
+| Raster modules combine CPU decode, Three textures, TSL, and draw objects | Portable techniques end at CPU data/bindings; engine targets realize GPU resources and draws    |
+| React/Three lifecycle defines publication boundaries                     | Runtime revision and target stage/commit define publication independently of any engine         |
+| Existing `Paragraph` is a separately callable subsystem                  | Paragraph implementation remains internal to the one retained handle API                        |
 
-- move Bitmap, MSDF, and Slug descriptors, contracts, validators, and portable record decoding out of Three-shaped modules;
-- retain the existing lazy runtime-baker import boundary and exact artifact bytes;
-- make Three.js textures, TSL materials, geometry, and draw batches consume the portable technique outputs;
-- prove that importing a technique contract does not load Three.js, TSL, TypeGPU, workers, or baker Wasm.
+The migration must preserve shaping, layout, paint, raster validation, transactional failure, and disposal behavior while
+moving Three-specific ownership behind the target boundary.
 
-Exit: all three techniques expose renderer-neutral authenticated data; offline/runtime bake identity and initial bundle size remain accounted for.
+## Implementation sequence
 
-### 11.3 — extract the portable text-generation state machine
+### 1. Extract desired-state paragraphs
 
-- move shaping/layout/paint invalidation, cancellation, generation replacement, readiness, and disposal out of `Object3D`;
-- publish immutable or explicitly owned generation inputs for engine adapters;
-- keep publication timing host-driven rather than adding a second arbitrary flush API;
-- exercise the state machine headlessly through success, failure, abort, overflow replacement, retained updates, and disposal.
+- Add stable `Paragraph` handles owned by a `ParagraphBatch`.
+- Move public text, span, content-box, style, paint, order, and glyph-origin mutation onto handle setters.
+- Treat nested option records as immutable replacement values.
+- Track dirty handles once with channel bitsets; do not scan every paragraph.
+- Coalesce add followed by dispose before synchronization to no work.
+- Keep every core paragraph handle permanently owned by its creating batch. Recreate desired state elsewhere through an
+  immutable snapshot plus destination `add()`, never handle transfer.
+- Make batch disposal cascade through owned paragraphs and attachments without disposing the runtime or fonts; make
+  runtime disposal the explicit outer cascade root.
 
-Exit: the complete lifecycle runs with no Three.js object and no GPU. The current Three.js behavior is not yet removed.
+Proof:
 
-### 11.4 — rebuild the existing Three.js + TSL product as an integration
+```ts
+paragraph.text = 'A';
+paragraph.text = 'B';
+paragraph.text = 'C';
+runtime.update();
 
-- make the Three.js object delegate portable work to the extracted state machine;
-- retain Object3D behavior, parent transforms, render-order composition, batching, warm updates, and matrix-lifecycle publication;
-- retain WebGPU and WebGL2 support and current React behavior;
-- compare artifact, layout, visual, lifecycle, allocation, package-size, and GPU evidence with the pre-extraction baseline.
+expect(shapeInputs).toEqual(['C']);
+```
 
-Exit: the shipped behavior is an adapter over the public or publishable portable boundary, with no unexplained regression.
+### 2. Implement fonts and same-technique font stacks
 
-### 11.5 — prove Three.js + TypeGPU is an orthogonal GPU path
+- Keep a single loaded font valid anywhere text accepts a font selection.
+- Create immutable non-empty stacks whose first font is primary and later fonts resolve missing glyphs in order.
+- Reject duplicate logical membership where ambiguous and any different technique identity.
+- Require every paragraph to own a font selection and validate it against its batch's declared technique.
+- Lease every selected concrete font for the retained paragraph lifetime and make early font disposal fail rather than
+  publishing missing-glyph substitutions.
+- Reuse the renderer-neutral `txt` and `span` composer for imperative literals and React nested-text flattening.
+- Pass all changed paragraphs through Unicode analysis and batched shaping with font-slot identity intact.
+- Prove missing glyph fallback across at least Latin, Arabic, and CJK cases.
 
-- implement one technique first, likely Bitmap, through `@typegpu/three` without changing the Three.js engine host;
-- establish how transforms, attributes, uniforms, texture resources, and material publication cross the bridge;
-- compare visual output and retained updates against the TSL implementation;
-- repeat with Slug before declaring the GPU-authoring interface sufficient.
+Proof:
 
-Exit: one Three.js engine integration can select TSL or TypeGPU without changing shaping, layout, artifact, or scene-lifecycle ownership. The TypeGPU path is labeled WebGPU-only if that remains true.
+```ts
+expect(() => createFontStack(interMtsdf, iconBitmap)).toThrow('mixed-technique-font-stack');
+```
 
-### 11.6 — prove a non-Three engine host
+### 3. Implement runtime synchronization
 
-- first create a minimal TypeGPU/raw-WebGPU proof host to expose hidden Three.js assumptions cheaply;
-- then select one real canvas/game-engine integration based on public extension hooks, WebGPU maturity, package cost, and maintainability;
-- implement the adapter in a private workspace package using only published portable contracts;
-- require the second engine to consume the same prepared generations and raster artifacts without core changes.
+- `update()` snapshots every current dirty handle and completes synchronously.
+- `updateAsync()` snapshots the same state and uses the asynchronous executor.
+- Implement Promise and callback overloads without constructing a Promise in callback form.
+- Stream completed Worker results into unpublished staging storage with optional progress while retaining atomic publication.
+- Return the current revision without allocation for a no-op synchronous update.
+- Let a newer synchronization supersede an unpublished older asynchronous generation. Resolve supersession and
+  cancellation as handled outcomes; reject only actual preparation failures.
+- Publish every affected paragraph batch atomically or none of them.
+- Keep writes after a snapshot dirty for the next synchronization.
 
-Exit: a second engine renders retained text, replaces generations transactionally, recovers from abort/failure/device or navigation lifecycle, and does not import Three.js or TSL.
+Proof:
 
-### 11.7 — stabilize exports, guidance, and release gates
+```ts
+paragraph.text = 'A';
+const old = runtime.updateAsync();
+paragraph.text = 'B';
+const current = runtime.update();
 
-- name the portable state machine from observed usage in both engine hosts;
-- decide subpaths versus separate packages from dependency and bundle evidence;
-- publish an engine-integration guide distinct from the raster/baker technique guide;
-- reduce examples to canonical portable, Three.js + TSL, Three.js + TypeGPU, and non-Three engine paths;
-- update API, architecture, package, decision, and roadmap concepts;
-- run deterministic, browser, GPU, package-size, documentation, and OKF gates.
+await expect(old).resolves.toMatchObject({ status: 'superseded' });
+expect(currentParagraph(current).text).toBe('B');
+```
 
-Exit: a third party can identify the correct extension seam without copying core orchestration or importing an unrelated engine.
+### 4. Compile physical glyph batches in core
 
-## Proof matrix
+- Sort paragraphs by finite application order and stable insertion order.
+- Resolve every glyph to one same-technique font resource.
+- Allocate stable instance slots by technique/resource/pipeline variant/chunk.
+- Treat capacity as glyph-instance slots per physical resource buffer; paragraph handles have no capacity limit.
+- Name the non-resizing policy `fixed`. Detect its overflow during synchronization after exact shaping, preserve the prior
+  revision, and require render-loop adapters to retain and report the typed failure without throwing from rendering.
+- Latch an unchanged failed batch generation after reporting it once. Exclude that generation from later runtime updates
+  until relevant mutation so unrelated batches and explicit replacements can publish without retry churn.
+- Let a caller change paragraph-batch capacity explicitly while preserving the batch, every paragraph handle, and every
+  attachment. Reuse compatible semantic caches, stage canonical and target replacement storage transactionally, and retire
+  old buffers only after publication and engine fences.
+- Default explicit batches to lazy 4,096-glyph chunks and support explicit `size` plus `grow`, `chunk`, or `fixed` policy.
+- Pack technique-specific instance attributes once.
+- Compute coalesced dirty ranges per storage channel.
+- Emit glyph runs that preserve paragraph, variant, and technique compositing order across resource changes.
+- Never make targets inspect glyphs to choose a batch.
 
-| Proof                   | Engine host                 | GPU-authoring layer                              | What it establishes                                                      |
-| ----------------------- | --------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------ |
-| Existing product        | Three.js                    | TSL                                              | Baseline behavior, dual WebGPU/WebGL output, compatibility               |
-| Orthogonal shader proof | Three.js                    | TypeGPU through `@typegpu/three`                 | GPU-authoring choice does not define engine ownership                    |
-| Boundary probe          | Minimal custom host         | TypeGPU or raw WebGPU interop                    | Core has no hidden scene-graph dependency                                |
-| External-engine proof   | Selected game/canvas engine | Engine-native WGSL, TypeGPU, or supported bridge | Another engine can consume the public generation and technique contracts |
-| Application binding     | Three.js                    | TSL and TypeGPU where supported                  | R3F remains a thin wrapper rather than the portable abstraction          |
+Proof:
 
-Supporting every named engine is not an exit gate. One independent, production-shaped non-Three proof plus a public adapter contract is stronger evidence than several shallow wrappers.
+```ts
+expect(resolveFonts('Inter -> Noto -> Inter')).toProduce({
+  glyphBatches: ['Inter', 'Noto'],
+  glyphRuns: ['Inter[0..8]', 'Noto[0..3]', 'Inter[8..13]'],
+});
+```
 
-## Non-negotiable gates
+### 5. Add canonical CPU instance storage
 
-- `@pmndrs/text` portable imports contain no Three.js, TSL, TypeGPU, React, DOM scene, or renderer types.
-- Bitmap, MSDF, and Slug artifact bytes, identity, validation, and baker parity do not change accidentally during renderer extraction.
-- Runtime bakers, workers, validation graphs, and Wasm remain outside initial consumer bundles.
-- The portable state machine has deterministic headless lifecycle coverage.
-- The Three.js + TSL adapter preserves WebGPU and WebGL2 behavior, public examples, retained updates, render ordering, and recovery.
-- Three.js + TypeGPU and non-Three proofs use the same shaping/layout/generation outputs.
-- Adding the second engine does not require edits to portable core for engine-specific behavior.
-- Engine adapters restore or release all owned renderer state after success, failure, abort, device loss, and disposal.
-- Performance comparisons report identical work, artifact, viewport, DPR, draw count, and timing scope; unexplained regressions block acceptance.
-- Package and documentation checks prove import isolation and make each extension seam discoverable.
+- Define one canonical structure-of-arrays instance contract per technique.
+- Let core and the technique populate and retain those arrays.
+- Report exact coalesced adjacent-revision dirty ranges for every changed glyph batch.
+- Let matching targets copy or upload the selected ranges 1:1 and different engine layouts map only those ranges.
+- Initialize a late or gapped target from the live ranges already named by the current glyph-run plan.
+- Allow several targets and late attachment to consume the same prepared storage without reshaping.
+- Prove targets never reshape, repartition physical storage, or change non-equivalent glyph-run order while synchronizing.
 
-## Explicit non-goals
+### 5a. Split portable techniques from engine raster programs
 
-- building a general-purpose game engine;
-- replacing Three.js as the first supported engine;
-- making TypeGPU itself look like a scene graph;
-- writing React/Vue/Svelte wrappers as evidence of renderer portability;
-- extending or replacing HarfRust shaping;
-- auto-batching across unrelated text instances;
-- changing Bitmap, MSDF, or Slug artifact formats without independent evidence;
-- promising every GPU-authoring layer on every engine or backend.
+- Keep every baker free of runtime engine imports.
+- Move artifact validation, external resource resolution, CPU page/table decoding, coverage checks, glyph-resource
+  selection, and canonical instance packing into a renderer-neutral `RasterTechnique`.
+- Expose the technique-authored `binding` on every prepared glyph batch so targets receive the exact page/buffer selection
+  instead of rediscovering it from glyph IDs.
+- Move Three textures, attributes, TSL materials, scene objects, and renderer disposal into Three raster targets.
+- Permit an optional `RasterProgram` seam when multiple engines share a shader/resource backend such as TypeGPU and raw
+  WebGPU interop; do not require an artificial universal shader interface in core.
+- Permit an optional external Three/TypeGPU experiment only for capabilities the exact-version bridge proves. At the
+  reviewed versions it is nullary WGSL injection, WebGPU-only, and not a complete Slug/Bitmap resource bridge. Keep
+  Three-owned accessors, materials, pipeline state, and lifecycle in that adapter; neither core nor the portable technique
+  imports TypeGPU or TSL.
+- Retain decoded CPU page/table bytes through loaded-font lifetime so several targets and late attachment need no refetch or
+  decode.
 
-## Roadmap placement
+Proof:
 
-If accepted, insert this as the new Milestone 11 before editorial-flow work. Shift the current additive milestone numbers only in the acceptance change so references remain deterministic. The engine boundary should be proven before new layout and paging features create more Three-shaped integration work.
+```ts
+expect(mtsdfBaker).not.toImportAnyRenderer();
+expect(mtsdfTechnique).not.toImportAnyRenderer();
+expect(threeMtsdfTarget.technique).toBe(mtsdfTechnique);
+expect(typeGpuMtsdfProgram.technique).toBe(mtsdfTechnique);
+expect(typeGpuThreeMtsdfProgram.technique).toBe(mtsdfTechnique);
+```
 
-## Questions the proof must answer
+### 6. Rebuild the Three.js public surface over hidden core objects
 
-1. Is the portable state machine best exposed as a runtime, instance, model, pipeline, or a lower-level generation store?
-2. Does portable artifact decoding produce immutable typed views, a resource factory input, or technique-owned prepared data?
-3. Which publication operations are universal transactions, and which remain engine hooks?
-4. Can Three.js + TypeGPU reuse the same instance buffers and resource lifetime as Three.js + TSL, or only the shader logic?
-5. Which non-Three game engine has the smallest honest adapter surface while still exercising ordering, transforms, retained batches, and device lifecycle?
-6. Should first-party techniques be subpath exports of `@pmndrs/text` or separate packages with shared contract-only entries?
+- Keep Three.js applications on `FontLoader`, `TextGroup`, and transform-bearing `Text`; never expose a core runtime,
+  paragraph batch, paragraph handle, prepared revision, or target adapter to ordinary Three users.
+- Make the Three `FontLoader` lazily initialize and cache the core shaper on its first load while preserving explicit
+  callback/Promise loading and Three `LoadingManager` behavior.
+- Make each `TextGroup` declare one technique and own one explicit scene render phase backed by a core paragraph batch and
+  renderer target. Require every `Text` to carry a same-technique `Font` or `FontStack`. Make an ungrouped `Text` own an
+  implicit batch of one derived from that selection.
+- Keep `Text` unbound until scene attachment. Reconcile direct and nested scene membership before the first
+  shaping call so resident text renders in the first observing frame.
+- Treat movement between batches as an atomic removal of the old paragraph allocation plus allocation of retained desired
+  state in the destination; do not add a movable core paragraph contract.
+- Let `Text` own desired state and font leases independently of membership. Disposing a populated `TextGroup` unbinds all
+  member text and retires group resources without disposing children or fonts; each live compatible `Text` can bind fresh
+  membership in another group. Treat a disposed group that remains in the scene graph as a terminal non-rendering boundary,
+  never as permission to fall through into an ancestor group or implicit standalone batch.
+- Make `TextGroup` an `Object3D`, not a Group, so Three naturally carries the nearest real ancestor Group's `groupOrder`
+  through it. Map `TextGroup.renderOrder` plus the program draw ordinal onto the physical draw objects' secondary
+  render orders; do not add a hidden Group or an inheritance API.
+- Let Three own sync/async core calls, dirty-range mapping, transform updates, and publication during the render lifecycle.
+  The application calls only `renderer.render(scene, camera)`.
+- Expose explicit capacity changes on `TextGroup` and standalone `Text` while preserving their identities and hidden
+  paragraph handles. Reject `TextGroup.clone()` and `copy()` because recursive scene copying cannot safely duplicate batch
+  membership, external refs, subscriptions, and renderer resources.
+- Bind a group to one renderer target lifetime. Require separate groups for simultaneous scene placements, intentional
+  render phases, or different renderers; ordinary Three reparenting may move one group between scenes.
+- Export each canonical technique shader and let custom programs compose final TSL output without rewriting Bitmap,
+  MTSDF, or Slug. Keep the optional `TextEffect` helper at the Three layer; core carries only generic variants.
+- Remove Three-owned shaping, source sorting, resource partitioning, and slot allocation. Retain Three-owned variant
+  compatibility, final draw compilation, materials, and render-list integration.
 
-[^typegpu-scope]: TypeGPU documentation, “Why TypeGPU?”
+### 7. Rebuild React Three Fiber binding
 
-[^typegpu-three]: TypeGPU documentation, “@typegpu/three.”
+- Let declarative components create retained `Text` and `TextGroup` objects without exposing core handles.
+- Let R3F reconciliation update desired state; Three's matrix/render lifecycle performs the same group synchronization as
+  the imperative API.
+- Preserve nested spans as paragraph data, not independent render objects.
+- Preserve Suspense for loading only; warm shaping does not require a readiness Promise.
+- Make synchronous versus asynchronous synchronization an integration policy selectable per frame/update.
+
+### 8. Implement and prove the external TypeGPU engine
+
+Implement the complete [TypeGPU API](typegpu-api.md), then build the smallest application in
+`AlexJWayne/typegpu-shader-canvas` that proves:
+
+- explicit baked artifact loading;
+- one same-technique `FontStack` with ordered missing-glyph resolution;
+- more than one paragraph in one paragraph batch;
+- caller-owned `TgpuRoot`, device, render pass, queue submission, and frame loop;
+- reusable typed Bitmap, MTSDF, and Slug shaders plus program-owned resources, variants, pipelines, and draw compilation;
+- core-owned canonical instance storage, adjacent dirty ranges, and current live glyph-run ranges;
+- at least two physical raster-resource batches and ordered variant-bearing glyph runs;
+- one program that batches several parameterized variants into one draw and one program that deliberately splits them;
+- paragraph transforms, visibility, and effect parameters without reshaping;
+- one synchronous update and one asynchronous update;
+- no Three.js import or Three-derived adapter logic.
+
+### 8a. Falsify or narrow the TypeGPU-to-Three bridge
+
+Start from the reviewed baseline `three@0.185.1`, `typegpu@0.11.9`, and `@typegpu/three@0.11.0`: `toTSL()` accepts a nullary
+closure, injects resolved WGSL through Three's WebGPU builder, has no forced-WebGL2 route, and has not carried Slug's
+sampleable resources. Build a minimal exact-version fixture before adapting text. Only if that fixture proves real Bitmap
+and Slug resources, dependent loads, vertex work, structured results, and every promised backend should the experiment
+inspect parity and measure transfer/graph/compilation cost. Otherwise narrow the optional external package to the pure
+WebGPU math it actually supports; native TSL remains authoritative for Three.
+
+### 9. Prove Wayfare
+
+First inspect and pin `iwoplaza/wayfare` source to establish its public device, pass, resource, transform, and lifecycle
+hooks; no current document treats compatibility as already proven. Then build the smallest application that proves the
+same contract. The Wayfare adapter may own scene integration but must not reshape, repartition physical storage, resort
+source text, or recompute canonical packing. Reuse a TypeGPU program only if the pinned source and execution proof establish
+compatible WebGPU device/pass interop; otherwise implement a Wayfare-native program against the same semantic raster ABI.
+
+### 10. Prove an external gpucat package
+
+Implement the [gpucat fitness plan](gpucat-integration.md) in an isolated package that installs packed public core and
+technique artifacts. Prove typed buffer/texture realization, dirty-range uploads, transforms, ordered instanced draws,
+resource disposal, and Bitmap/MTSDF/Slug output without changing core or importing private source. Treat canonical Slug
+shader reuse as its own gate: a failed shader-sharing experiment may require a gpucat-native program, but not a core API.
+
+### 11. Verify all techniques
+
+Run Bitmap, MTSDF, and Slug independently through:
+
+```ts
+await proveHeadlessCore();
+await proveThree({ backends: ['webgpu', 'webgl2'] });
+await proveRawTypeGpu();
+await proveWayfare();
+await proveGpucatExternalPackage();
+```
+
+No test combines techniques inside one font stack or paragraph batch. A technique-specific proof may use several fonts and
+must verify exact core glyph-run order and the minimum draw count permitted by its program compatibility.
+
+## Performance evidence
+
+Measure separately:
+
+```ts
+interface CoreBatchMetrics {
+  dirtyParagraphs: number;
+  shapedParagraphs: number;
+  shapedGlyphs: number;
+  layoutMilliseconds: number;
+  partitionMilliseconds: number;
+  packedGlyphs: number;
+  packedBytes: number;
+  dirtyRangeCount: number;
+  glyphBatchCount: number;
+  glyphRunCount: number;
+  compiledDrawCount: number;
+  capacityGrowths: number;
+  overflowChunks: number;
+}
+```
+
+The proof must distinguish semantic CPU state, canonical packed CPU storage, target-owned CPU/staging storage, decoded technique resources, GPU
+resources, glyph-run count, and compiled draw count. It must show that warm handle mutations do not allocate per setter and that
+callback-form asynchronous updates do not allocate a public Promise.
+
+## Exit gates
+
+- The README and exported declarations match the [core API](core-api.md).
+- One public paragraph-handle API covers multiline text, labels, and font-backed icons.
+- A same-technique `FontStack` shapes one paragraph across multiple concrete fonts exactly.
+- Mixed-technique font stacks and paragraph additions fail before shaping.
+- Repeated handle writes coalesce before synchronization.
+- Sync and async calls alternate on one runtime without copying runtime state or font registrations.
+- No-op `update()` is allocation-free.
+- Newer synchronization prevents stale async publication.
+- Core owns source sorting, resource partitioning, slot allocation, packing, dirty ranges, resolved variants, and ordered
+  glyph runs. Programs own variant compatibility and final draw compilation.
+- Core retains canonical packed CPU storage. Targets synchronize adjacent dirty ranges, or current live glyph-run ranges
+  when first attached or recovering across a revision gap, into their own buffers.
+- Separate paragraph batches remain separate render phases.
+- Explicit capacity changes preserve batch, paragraph, attachment, and Three object identities; core and Three batch
+  cloning remain unsupported.
+- Three.js, raw TypeGPU, Wayfare, and the external gpucat package execute the same core output for Bitmap, MTSDF, and Slug.
+- Core, portable techniques, and bakers import no Three.js, TypeGPU, Wayfare, or gpucat code; integration packages pass a
+  packed-public-package test without deep imports.
+- Full repository checks, package-size gates, and documentation validation pass.

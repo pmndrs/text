@@ -9,12 +9,19 @@ okf_version: '0.2'
 - [Project README](../README.md) — product overview, API preview, implementation order, and local setup.
 - [Project brief](planning/project-brief.md) — product outcome, scope, non-goals, and success criteria.
 - [Canonical roadmap](roadmap/roadmap.md) — implementation sequence, issue-sized milestones, dependencies, and exit gates.
-- [Runtime and bake API V0](planning/api-shapes.md) — accepted V1 public API, package boundaries, and explicitly deferred additions.
-- [Raster and baker plugin guide](planning/raster-baker-plugin.md) — build an external technique through the public runtime, baker, artifact, discovery, and lifecycle contracts.
+- [Merged v0 runtime and bake API](planning/api-shapes.md) — migration fixture for the implemented, unreleased package boundaries and explicitly deferred additions.
+- [Three.js text API](planning/three-api.md) — authoritative Three-native loader, explicit `TextGroup` batching, reusable text across group disposal, retained non-throwing errors, ordering, and lifecycle contract.
+- [Core text API](planning/core-api.md) — authoritative API for ordered font stacks, batch-owned paragraph handles, identity-preserving capacity changes, fixed-capacity failure, synchronized updates, and renderer-ready glyph batches.
+- [Engine integration contract](planning/engine-integration-contract.md) — exact storage, batching, submission, ownership, staging, and frame-publication boundary for custom renderers.
+- [Raster technique and engine resource API](planning/raster-technique-api.md) — portable artifact loading, CPU raster data, glyph-resource binding, reusable shader-backend programs, and engine target ownership.
+- [TypeGPU-first shader authority](planning/typegpu-first-shader-authority.md) — exploratory TypeGPU-first shader/program architecture, Three and gpucat bridge limits, fallback authority models, and proof gates.
+- [Merged v0 raster and baker plugin guide](planning/raster-baker-plugin.md) — build against the implemented combined runtime/renderer module before the target v1 extraction replaces it.
+- [External gpucat integration fitness plan](planning/gpucat-integration.md) — source-validated proof plan for consuming the target v1 core without private imports or core changes.
 
 ## Architecture and data contracts
 
 - [Architecture](planning/architecture.md) — ownership, loading, shaping, paragraph, and raster boundaries.
+- [Renderer-neutral core and engine plan](planning/engine-integration-boundary.md) — WIP extraction sequence and proof gates for Three.js and Wayfare.
 - [Shaping data contract V0](planning/shaping-data-contract.md) — retained SFNT profile, Wasm ABI, validation, and conformance.
 - [Raster data contract V0](planning/raster-data-contract.md) — bitmap, MSDF, and Slug records and resources.
 - [glTF extension drafts](planning/extensions/index.md) — `PMNDRS_font` and raster companion schemas.

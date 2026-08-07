@@ -10,23 +10,31 @@ sources:
   - id: 'citation-2'
     resource: '../planning/conformance-plan.md'
     title: 'Conformance plan'
-  - id: 'citation-3'
-    resource: '../../README.md#benchmark-harness-wireframe'
-    title: 'Repository benchmark-harness wireframe'
   - id: 'benchmark-workload-catalog'
     resource: '../../apps/benchmarks/src/workloads/catalog.ts'
     title: 'Typed live-workload catalog'
+  - id: 'core-api'
+    resource: '../planning/core-api.md'
+    title: 'Core text API'
+  - id: 'engine-integration-contract'
+    resource: '../planning/engine-integration-contract.md'
+    title: 'Engine integration contract'
+  - id: 'engine-integration-plan'
+    resource: '../planning/engine-integration-boundary.md'
+    title: 'Renderer-neutral extraction plan'
 
 generated:
   by: openai-codex/gpt-5.6
-  at: '2026-08-03T15:34:13Z'
+  at: '2026-08-07T01:16:02Z'
 ---
 
 # Canonical implementation roadmap
 
 This is the only active execution order.
 
-In this roadmap, **integration slice** means the internal bitmap proof in milestones 0–7. **V1** means the first shippable release at milestone 10, after bitmap, MSDF, and Slug have all passed their gates. The MSDF engine uses MTSDF atlas encoding.
+In this roadmap, **integration slice** means the internal bitmap proof in milestones 0–7. **v0** is the merged, unreleased
+implementation completed through milestone 10. **Target v1** is milestone 11's renderer-neutral core and integration work;
+**v1** becomes the first public release only after that API and its integrations pass their gates. The MSDF engine uses MTSDF atlas encoding.
 
 Effort estimates are relative: **S** is one focused change, **M** is a multi-part change normally completed in one or two pull requests, **L** spans several coordinated pull requests, and **XL** is an epic that must be split before implementation.
 
@@ -36,7 +44,8 @@ One pinned OpenType font must travel through Node pre-baking and automatic Worke
 
 The architecture supports multiple one-face fonts and independently packaged rasters from the beginning, but the first slice proves one font and one raster.
 
-This slice is an internal integration proof, not a release candidate. The first shippable release additionally requires production-ready MSDF and Slug generators, payloads, runtime modules, visual fixtures, and performance evidence.
+This slice is an internal integration proof, not a release candidate. MTSDF and Slug subsequently completed the merged v0
+renderer baseline. Their completion did not publish a release or freeze the public API; milestone 11 owns that target v1 gate.
 
 > **First executable artifact:** build the shared interactive/headless benchmark harness before the baker, loader, shaper, paragraph engine, or raster. Each implementation milestone adds adapters and scenarios to that existing harness. The first rendered bitmap frame MUST appear there; the roadmap does not authorize a separate throwaway rendering demo that is benchmarked later.
 
@@ -44,19 +53,20 @@ This slice is an internal integration proof, not a release candidate. The first 
 
 Status key: ✅ complete · 🟡 in progress · ⬜ not started · ⛔ blocked
 
-| Order | Status | Milestone                                                             | Effort | Depends on          | Exit result                                                                                                 |
-| ----: | :----: | --------------------------------------------------------------------- | ------ | ------------------- | ----------------------------------------------------------------------------------------------------------- |
-|     0 |   ✅   | Accept contracts, type fixtures, and versions                         | S      | documentation audit | Public inference and identity, ownership, package, and version decisions cannot force a redesign.           |
-|     1 |   ✅   | Build benchmark harness and pin fixtures                              | L      | 0                   | The first executable product surface runs shared interactive/headless smoke scenarios over pinned fixtures. |
-|     2 |   ✅   | Build font bake core, bitmap baker package, and Node host             | L      | 1                   | Node composes a valid core GLB and one package-owned bitmap artifact without advanced compiler work.        |
-|     3 |   ✅   | Build baked-first loader and Worker fallback                          | L      | 2                   | Baked hits stay small; misses dynamically load the Worker path and reproduce canonical bytes.               |
-|     4 |   ✅   | Integrate HarfRust Wasm shaping                                       | L      | 2–3                 | Coarse batch calls match pinned HarfRust fixtures and expose clusters, positions, and flags.                |
-|     5 |   ✅   | Implement paragraph reflow and validate universal shaping assumptions | L      | 4                   | Allocation-light layout passes Latin, bidi/complex-script, and focused CJK source/reduced-font evidence.    |
-|     6 |   ✅   | Prove rendering with bitmap inside the benchmark harness              | L      | 3, 5                | The harness produces the first real font frame on WebGPU and WebGL2 with direct bulk upload.                |
-|     7 |   ✅   | Harden the integration proof                                          | L      | 1–6                 | Identity, cancellation, limits, invalid data, package separation, and baselines pass review.                |
-|     8 |   ✅   | Implement and validate MSDF                                           | XL     | 7                   | The MTSDF-backed general-purpose raster passes visual, payload, and GPU performance gates.                  |
-|     9 |   ✅   | Port/rewrite and validate Slug                                        | XL     | 7                   | Outline-accurate text passes correctness, packing, visual, and GPU performance gates.                       |
-|    10 |   ✅   | Harden the first shippable release                                    | L      | 8–9                 | Bitmap, MSDF, and Slug ship as independent modules over one shaping/layout result.                          |
+| Order | Status | Milestone                                                             | Effort | Depends on          | Exit result                                                                                                  |
+| ----: | :----: | --------------------------------------------------------------------- | ------ | ------------------- | ------------------------------------------------------------------------------------------------------------ |
+|     0 |   ✅   | Accept contracts, type fixtures, and versions                         | S      | documentation audit | Public inference and identity, ownership, package, and version decisions cannot force a redesign.            |
+|     1 |   ✅   | Build benchmark harness and pin fixtures                              | L      | 0                   | The first executable product surface runs shared interactive/headless smoke scenarios over pinned fixtures.  |
+|     2 |   ✅   | Build font bake core, bitmap baker package, and Node host             | L      | 1                   | Node composes a valid core GLB and one package-owned bitmap artifact without advanced compiler work.         |
+|     3 |   ✅   | Build baked-first loader and Worker fallback                          | L      | 2                   | Baked hits stay small; misses dynamically load the Worker path and reproduce canonical bytes.                |
+|     4 |   ✅   | Integrate HarfRust Wasm shaping                                       | L      | 2–3                 | Coarse batch calls match pinned HarfRust fixtures and expose clusters, positions, and flags.                 |
+|     5 |   ✅   | Implement paragraph reflow and validate universal shaping assumptions | L      | 4                   | Allocation-light layout passes Latin, bidi/complex-script, and focused CJK source/reduced-font evidence.     |
+|     6 |   ✅   | Prove rendering with bitmap inside the benchmark harness              | L      | 3, 5                | The harness produces the first real font frame on WebGPU and WebGL2 with direct bulk upload.                 |
+|     7 |   ✅   | Harden the integration proof                                          | L      | 1–6                 | Identity, cancellation, limits, invalid data, package separation, and baselines pass review.                 |
+|     8 |   ✅   | Implement and validate MSDF                                           | XL     | 7                   | The MTSDF-backed general-purpose raster passes visual, payload, and GPU performance gates.                   |
+|     9 |   ✅   | Port/rewrite and validate Slug                                        | XL     | 7                   | Outline-accurate text passes correctness, packing, visual, and GPU performance gates.                        |
+|    10 |   ✅   | Harden the merged v0 renderer baseline                                | L      | 8–9                 | Bitmap, MSDF, and Slug merge as independent modules over one shaping/layout result; no release is published. |
+|    11 |   ⬜   | Extract the renderer-neutral batched core and engine target contract  | XL     | 10                  | One explicit batch renders through Three.js and Wayfare without renderer dependencies in portable core.      |
 
 Milestones 0–10 are closed. Milestone 11 is the next additive workstream.
 
@@ -77,56 +87,68 @@ flowchart LR
   M7 --> M9["9 Slug"]
   M8 --> M10["10 Shippable raster set"]
   M9 --> M10
+  M10 --> M11["11 Renderer-neutral batched core<br/>+ engine targets"]
 ```
 
 ## Issue-sized implementation sequence
 
 These rows replace the former separate backlog. Each is intended to become one focused issue or a short, explicitly linked PR sequence.
 
-| ID   | Status | Work                                                                                                                                                                                     | Size | Depends on |
-| ---- | :----: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :--: | ---------- |
-| 0.1  |   ✅   | Accept public core/React APIs, typed raster capabilities, URL resolution, and ESM-only exports.                                                                                          |  S   | —          |
-| 0.2  |   ✅   | Make the initial `@pmndrs/text` contract shim preserve font/raster literals and pass positive/negative composition fixtures.                                                             |  S   | 0.1        |
-| 0.3  |   ✅   | Accept identity, GLB, Worker, and version contracts.                                                                                                                                     |  S   | 0.2        |
-| 1.1  |   ✅   | Build shared benchmark target/scenario/result contracts and a deterministic synthetic smoke target.                                                                                      |  M   | 0.3        |
-| 1.2  |   ✅   | Add the interactive lab, headless runner, raw result export, and package-size lane over the same registry.                                                                               |  M   | 1.1        |
-| 1.3  |   ✅   | Pin the source font, HarfRust/HarfBuzz shaping oracles, and browser HTML/CSS visual reference as harness fixtures.                                                                       |  M   | 1.2        |
-| 2.1  |   ✅   | Implement static `defineFont` discovery, literal raster extraction, and conservative local source resolution.                                                                            |  M   | 1.3        |
-| 2.2  |   ✅   | Implement the host-independent font bake request/result core.                                                                                                                            |  M   | 2.1        |
-| 2.3  |   ✅   | Emit/validate the core font and declared package-owned bitmap strikes.                                                                                                                   |  M   | 2.2        |
-| 2.4  |   ✅   | Add the Node API, CLI, deterministic bytes, and report.                                                                                                                                  |  M   | 2.3        |
-| 3.1  |   ✅   | Implement baked probing, validation, and registration.                                                                                                                                   |  M   | 2.4        |
-| 3.2  |   ✅   | Add the dynamically imported Worker bake path.                                                                                                                                           |  M   | 3.1        |
-| 3.3  |   ✅   | Prove Node/Worker parity, cancellation, and import isolation.                                                                                                                            |  M   | 3.2        |
-| 4.1  |   ✅   | Register fonts and cache HarfRust data/plans in Wasm.                                                                                                                                    |  M   | 2.2        |
-| 4.2  |   ✅   | Implement batched shape/reshape ABI and conformance fixtures.                                                                                                                            |  M   | 4.1        |
-| 5.1  |   ✅   | Build paragraph analysis, measured clusters, greedy breaks, and allocation-light `measure`.                                                                                              |  M   | 4.2        |
-| 5.2  |   ✅   | Add final positioned `layout`, reflow caches, and batched boundary reshaping.                                                                                                            |  M   | 5.1        |
-| 5.3  |   ✅   | Add alignment, clipping, max-lines, ellipsis, bidi, and current-uikit adapter fixtures.                                                                                                  |  M   | 5.2        |
-| 5.4  |   ✅   | Pin one redistributable pan-CJK face and prove source/reduced HarfRust, HarfBuzz, horizontal paragraph layout, fuzz, and Node/Chromium/Vitexec evidence without renderer or paging work. |  L   | 5.3        |
-| 6.0  |   ✅   | Establish the current-repository TSL compiler, shader, and live WebGPU/WebGL2 baseline without broad type erasure.                                                                       |  S   | 3.3, 5.4   |
-| 6.1  |   ✅   | Upload/render bitmap records and textures as the harness's first real raster target on WebGPU/WebGL2.                                                                                    |  M   | 6.0        |
-| 6.2  |   ✅   | Implement the Three.js `Text` object over the bitmap proof.                                                                                                                              |  M   | 6.1        |
-| 6.3  |   ✅   | Implement `@pmndrs/text/react` as a thin reconciliation layer.                                                                                                                           |  M   | 6.2        |
-| 6.4  |   ✅   | Rework the harness into a benchmark-first human control plane with a separate visual conformance mode.                                                                                   |  M   | 6.1–6.3    |
-| 7.1  |   ✅   | Harden lifecycle, invalid input, limits, and package graphs.                                                                                                                             |  M   | 1–6        |
-| 7.2  |   ✅   | Ship the advanced-shaping showcase and record end-to-end conformance/performance baselines.                                                                                              |  M   | 7.1        |
-| 8.1  |   ✅   | Implement the repository-owned deterministic `no_std` Rust MTSDF core and pass panic, scalar/SIMD, Wasm, size, fuzz, and native-msdfgen quality gates.                                   |  L   | 7.2        |
-| 8.2  |   ✅   | Implement the fixed MTSDF baker, canonical 20-byte records, linear RGBA8 KTX2 payload, and embedded/external parity.                                                                     |  XL  | 8.1        |
-| 8.3  |   ✅   | Implement the optional MSDF runtime module, strict validation, one resource/batch family, paint effects, and disposal.                                                                   |  L   | 8.2        |
-| 8.4  |   ✅   | Implement one version-matched TSL MTSDF graph for WebGPU and WebGL2 with resize, transform, base-level minification, and effects scenes.                                                 |  L   | 8.3        |
-| 8.5  |   ✅   | Record visual-error, atlas, upload, memory, bundle-isolation, and steady-state rendering evidence.                                                                                       |  XL  | 8.4        |
-| 8.6  |   ✅   | Add configurable MTSDF quality, bounded runtime-atlas options, compiler-derived Wasm ABI layouts, and measured baker performance hardening before closing Milestone 8.                   |  XL  | 8.5        |
-| 9.1  |   ✅   | Port Slug outline conversion, exact normalization/bands, compact packing, deterministic baker, validator, and embedded/external resources.                                               |  XL  | 7.2        |
-| 9.2  |   ✅   | Copy and adapt the version-matched analytic TSL fill runtime, batching, lifecycle, fail-closed paint boundary, and public `Text` integration.                                            |  XL  | 9.1        |
-| 9.3  |   ✅   | Integrate Slug into the shared benchmark/conformance product, release-role scenes, source-outline matrix, and complete two-axis icon-font grid.                                          |  XL  | 9.2        |
-| 9.4  |   ✅   | Reproduce the applicable prior-fork performance baseline, evaluate retained challengers, and close payload, residency, frame-time, and bundle-isolation gates.                           |  XL  | 9.3        |
-| 10.1 |   ✅   | Replace the optional Three-shaped plugin seam with one required renderer-neutral transactional raster lifecycle and retain Three.js as an adapter.                                       |  L   | 8.6, 9.4   |
-| 10.2 |   ✅   | Publish warm shaping, layout, paint planning, and raster staging through the Three.js object-update lifecycle without consumer `ready` waits.                                            |  L   | 10.1       |
-| 10.3 |   ✅   | Add bounded glyph-capacity slack, complete in-place field replacement, authoritative shrink counts, overflow replacement, and coalesced dirty uploads to all three rasters.              |  XL  | 10.2       |
-| 10.4 |   ✅   | Prove the public extension boundary with a private workspace raster/baker package that owns a new kind, artifact, adapter, retained updates, overflow, abort, and disposal.              |  L   | 10.1, 10.3 |
-| 10.5 |   ✅   | Remove benchmark recycling workarounds and prove Icon Grid plus every Presentation workload through sequential, timed, allocation, cadence, dual-backend, and React Doctor gates.        |  XL  | 10.2–10.4  |
-| 10.6 |   ✅   | Complete raster switching, release conformance, public API review, recommendations, plugin authoring guidance, package-size evidence, and signed stacked delivery.                       |  L   | 10.5       |
+| ID    | Status | Work                                                                                                                                                                                                                                                                           | Size | Depends on |
+| ----- | :----: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :--: | ---------- |
+| 0.1   |   ✅   | Accept public core/React APIs, typed raster capabilities, URL resolution, and ESM-only exports.                                                                                                                                                                                |  S   | —          |
+| 0.2   |   ✅   | Make the initial `@pmndrs/text` contract shim preserve font/raster literals and pass positive/negative composition fixtures.                                                                                                                                                   |  S   | 0.1        |
+| 0.3   |   ✅   | Accept identity, GLB, Worker, and version contracts.                                                                                                                                                                                                                           |  S   | 0.2        |
+| 1.1   |   ✅   | Build shared benchmark target/scenario/result contracts and a deterministic synthetic smoke target.                                                                                                                                                                            |  M   | 0.3        |
+| 1.2   |   ✅   | Add the interactive lab, headless runner, raw result export, and package-size lane over the same registry.                                                                                                                                                                     |  M   | 1.1        |
+| 1.3   |   ✅   | Pin the source font, HarfRust/HarfBuzz shaping oracles, and browser HTML/CSS visual reference as harness fixtures.                                                                                                                                                             |  M   | 1.2        |
+| 2.1   |   ✅   | Implement static `defineFont` discovery, literal raster extraction, and conservative local source resolution.                                                                                                                                                                  |  M   | 1.3        |
+| 2.2   |   ✅   | Implement the host-independent font bake request/result core.                                                                                                                                                                                                                  |  M   | 2.1        |
+| 2.3   |   ✅   | Emit/validate the core font and declared package-owned bitmap strikes.                                                                                                                                                                                                         |  M   | 2.2        |
+| 2.4   |   ✅   | Add the Node API, CLI, deterministic bytes, and report.                                                                                                                                                                                                                        |  M   | 2.3        |
+| 3.1   |   ✅   | Implement baked probing, validation, and registration.                                                                                                                                                                                                                         |  M   | 2.4        |
+| 3.2   |   ✅   | Add the dynamically imported Worker bake path.                                                                                                                                                                                                                                 |  M   | 3.1        |
+| 3.3   |   ✅   | Prove Node/Worker parity, cancellation, and import isolation.                                                                                                                                                                                                                  |  M   | 3.2        |
+| 4.1   |   ✅   | Register fonts and cache HarfRust data/plans in Wasm.                                                                                                                                                                                                                          |  M   | 2.2        |
+| 4.2   |   ✅   | Implement batched shape/reshape ABI and conformance fixtures.                                                                                                                                                                                                                  |  M   | 4.1        |
+| 5.1   |   ✅   | Build paragraph analysis, measured clusters, greedy breaks, and allocation-light `measure`.                                                                                                                                                                                    |  M   | 4.2        |
+| 5.2   |   ✅   | Add final positioned `layout`, reflow caches, and batched boundary reshaping.                                                                                                                                                                                                  |  M   | 5.1        |
+| 5.3   |   ✅   | Add alignment, clipping, max-lines, ellipsis, bidi, and current-uikit adapter fixtures.                                                                                                                                                                                        |  M   | 5.2        |
+| 5.4   |   ✅   | Pin one redistributable pan-CJK face and prove source/reduced HarfRust, HarfBuzz, horizontal paragraph layout, fuzz, and Node/Chromium/Vitexec evidence without renderer or paging work.                                                                                       |  L   | 5.3        |
+| 6.0   |   ✅   | Establish the current-repository TSL compiler, shader, and live WebGPU/WebGL2 baseline without broad type erasure.                                                                                                                                                             |  S   | 3.3, 5.4   |
+| 6.1   |   ✅   | Upload/render bitmap records and textures as the harness's first real raster target on WebGPU/WebGL2.                                                                                                                                                                          |  M   | 6.0        |
+| 6.2   |   ✅   | Implement the Three.js `Text` object over the bitmap proof.                                                                                                                                                                                                                    |  M   | 6.1        |
+| 6.3   |   ✅   | Implement `@pmndrs/text/react` as a thin reconciliation layer.                                                                                                                                                                                                                 |  M   | 6.2        |
+| 6.4   |   ✅   | Rework the harness into a benchmark-first human control plane with a separate visual conformance mode.                                                                                                                                                                         |  M   | 6.1–6.3    |
+| 7.1   |   ✅   | Harden lifecycle, invalid input, limits, and package graphs.                                                                                                                                                                                                                   |  M   | 1–6        |
+| 7.2   |   ✅   | Ship the advanced-shaping showcase and record end-to-end conformance/performance baselines.                                                                                                                                                                                    |  M   | 7.1        |
+| 8.1   |   ✅   | Implement the repository-owned deterministic `no_std` Rust MTSDF core and pass panic, scalar/SIMD, Wasm, size, fuzz, and native-msdfgen quality gates.                                                                                                                         |  L   | 7.2        |
+| 8.2   |   ✅   | Implement the fixed MTSDF baker, canonical 20-byte records, linear RGBA8 KTX2 payload, and embedded/external parity.                                                                                                                                                           |  XL  | 8.1        |
+| 8.3   |   ✅   | Implement the optional MSDF runtime module, strict validation, one resource/batch family, paint effects, and disposal.                                                                                                                                                         |  L   | 8.2        |
+| 8.4   |   ✅   | Implement one version-matched TSL MTSDF graph for WebGPU and WebGL2 with resize, transform, base-level minification, and effects scenes.                                                                                                                                       |  L   | 8.3        |
+| 8.5   |   ✅   | Record visual-error, atlas, upload, memory, bundle-isolation, and steady-state rendering evidence.                                                                                                                                                                             |  XL  | 8.4        |
+| 8.6   |   ✅   | Add configurable MTSDF quality, bounded runtime-atlas options, compiler-derived Wasm ABI layouts, and measured baker performance hardening before closing Milestone 8.                                                                                                         |  XL  | 8.5        |
+| 9.1   |   ✅   | Port Slug outline conversion, exact normalization/bands, compact packing, deterministic baker, validator, and embedded/external resources.                                                                                                                                     |  XL  | 7.2        |
+| 9.2   |   ✅   | Copy and adapt the version-matched analytic TSL fill runtime, batching, lifecycle, fail-closed paint boundary, and public `Text` integration.                                                                                                                                  |  XL  | 9.1        |
+| 9.3   |   ✅   | Integrate Slug into the shared benchmark/conformance product, raster-role scenes, source-outline matrix, and complete two-axis icon-font grid.                                                                                                                                 |  XL  | 9.2        |
+| 9.4   |   ✅   | Reproduce the applicable prior-fork performance baseline, evaluate retained challengers, and close payload, residency, frame-time, and bundle-isolation gates.                                                                                                                 |  XL  | 9.3        |
+| 10.1  |   ✅   | Replace the optional Three-shaped plugin seam with one required renderer-neutral transactional raster lifecycle and retain Three.js as an adapter.                                                                                                                             |  L   | 8.6, 9.4   |
+| 10.2  |   ✅   | Publish warm shaping, layout, paint planning, and raster staging through the Three.js object-update lifecycle without consumer `ready` waits.                                                                                                                                  |  L   | 10.1       |
+| 10.3  |   ✅   | Add bounded glyph-capacity slack, complete in-place field replacement, authoritative shrink counts, overflow replacement, and coalesced dirty uploads to all three rasters.                                                                                                    |  XL  | 10.2       |
+| 10.4  |   ✅   | Prove the public extension boundary with a private workspace raster/baker package that owns a new kind, artifact, adapter, retained updates, overflow, abort, and disposal.                                                                                                    |  L   | 10.1, 10.3 |
+| 10.5  |   ✅   | Remove benchmark recycling workarounds and prove Icon Grid plus every Presentation workload through sequential, timed, allocation, cadence, dual-backend, and React Doctor gates.                                                                                              |  XL  | 10.2–10.4  |
+| 10.6  |   ✅   | Complete raster switching, v0 conformance, public API review, recommendations, plugin authoring guidance, package-size evidence, and signed stacked merge.                                                                                                                     |  L   | 10.5       |
+| 11.1  |   ⬜   | Freeze the accepted README/API fixtures and capture current Three.js behavior, package graphs, rendering, allocation, and shaping baselines.                                                                                                                                   |  M   | 10.6       |
+| 11.2  |   ⬜   | Split portable raster decoding/bindings/packing from GPU realization; export reusable backend `RasterShader` algorithms and exact-typed programs, retaining native TSL and reusable TypeGPU paths.                                                                             |  L   | 11.1       |
+| 11.3  |   ⬜   | Implement `TextRuntime`, same-technique `FontStack`, batch-owned `Paragraph` handles, desired snapshots/font leases, typed `txt`/`span`, opaque batch/paragraph/span render variants, capacity, and origin overrides.                                                          |  XL  | 11.2       |
+| 11.4  |   ⬜   | Implement dirty-channel coalescing plus per-call `update()` and Promise/callback `updateAsync()` synchronization with cross-batch atomic publication, cancellation, and supersession.                                                                                          |  XL  | 11.3       |
+| 11.5  |   ⬜   | Move raster-resource partitioning, typed bindings, stable slots, overflow chunks, canonical CPU storage, dirty/live ranges, attachments, resolved variants, and ordered `PreparedGlyphRun` values into core.                                                                   |  XL  | 11.3–11.4  |
+| 11.6  |   ⬜   | Rebuild Bitmap, MTSDF, and Slug behind `FontLoader` → `TextGroup` → `Text`, including program-selected variants, reusable canonical shaders, optional TSL effects, late binding, native ordering, and renderer isolation.                                                      |  XL  | 11.5       |
+| 11.7  |   ⬜   | Rebuild React Three Fiber over the same retained `TextGroup`/`Text` lifecycle, letting Three synchronize once per batch during render while preserving nested spans.                                                                                                           |  L   | 11.6       |
+| 11.8  |   ⬜   | Run the TypeGPU-first capability gate, then implement reusable complete-stage TypeGPU raster programs and only the minimal direct pass encoder needed to prove the same public core batches/runs through TypeGPU and Wayfare.                                                  |  XL  | 11.5       |
+| 11.9  |   ⬜   | Prove TypeGPU-authored Bitmap/MTSDF/Slug through pinned `@typegpu/three`, including real textures, dependent loads, loops, vertex work, generated shaders, forced WebGPU/WebGL2 capability, pixels, and isolated cost; retain native TSL unless every promised backend passes. |  L   | 11.6, 11.8 |
+| 11.10 |   ⬜   | Prove an external gpucat package against public core and technique exports, including ordering limits, partial uploads, lifetime, TypeGPU/WGSL reuse, and an explicit GLSL companion or WebGPU-only scope, without a core change or private import.                            |  L   | 11.5, 11.8 |
+| 11.11 |   ⬜   | Reconcile implementation against the authoritative README and engine contract, remove the merged v0 surface, update package concepts/digests, and close package, browser, GPU, size, and OKF gates before declaring v1.                                                        |  L   | 11.6–11.10 |
 
 ## Milestone 0 — accept contracts and versions
 
@@ -260,7 +282,7 @@ Item 2.2 is closed. Item 2.3 adds the core/raster validators plus the package-ow
 - [x] Pinned Khronos glTF Validator 2.0.0-dev.3.10 runs offline and retains its report; only exact reviewed unsupported-extension and extension-owned-buffer informational messages are admitted.
 - [x] Ajv 6.15.0 evaluates the canonical Draft-04 `PMNDRS_font` schema against the vendored Khronos revision, with byte-identity and required-field/union mutation fixtures.
 - [x] Core semantic and payload validation covers buffer containment/non-overlap, versions, reciprocal raster identity, closed SFNT/checksums/metrics, dense extents, zero padding, and shaping identity.
-- [x] The canonical Inter product path uses the shipped validator, while the baker-only entry remains import-isolated from Ajv and `gltf-validator`.
+- [x] The canonical Inter product path uses the merged validator, while the baker-only entry remains import-isolated from Ajv and `gltf-validator`.
 - [x] Fixed-seed Rust-input and TypeScript artifact-mutation fuzz smoke tests run in the ordinary suite; longer mutation drivers plus pinned cargo-fuzz/libFuzzer coverage promote minimized findings into permanent malformed fixtures.
 - [x] The bitmap-owned module canonicalizes static strike tuples and derives the RFC 8785 raster key without a parallel core descriptor union.
 - [x] The bitmap baker emits deterministic unhinted grayscale strikes, dense 20-byte records, lossless R8 KTX2 pages, reports, and embedded/external packaging.
@@ -305,7 +327,7 @@ Explicitly exclude subsetting, shaping closure, dense remapping, compiled layout
 
 - [x] String, `URL`, `{ source }`, `{ source, baked }`, and `{ baked }` inputs normalize against one base, remove fragments, preserve queries, detect baked-only GLBs, and derive exact case-insensitive TTF/OTF/WOFF/WOFF2 or extensionless siblings.
 - [x] Concurrent equivalent requests share one versioned promise key; validated shaping identity deduplicates registration within a registry while separate registries and post-disposal generations remain isolated.
-- [x] Baked hits run the shipped GLB/Khronos/schema/semantic/payload validator before registration, distinguish missing, invalid, incompatible-version, fetch, and resource-limit failures, and cannot reach the runtime baker, bitmap baker, Node host, or bake Wasm in the initial graph.
+- [x] Baked hits run the merged GLB/Khronos/schema/semantic/payload validator before registration, distinguish missing, invalid, incompatible-version, fetch, and resource-limit failures, and cannot reach the runtime baker, bitmap baker, Node host, or bake Wasm in the initial graph.
 - [x] Registration owns caller bytes, extracts the exact reduced SFNT, glyph extents, availability bits, metrics, Unicode/source provenance, and raster directory needed by later shaping without reparsing the source font.
 - [x] Loader fixtures compare every extracted shaping byte to the independently validated GLB views; milestone 4 consumes these same retained views for bit-for-bit corpus shaping rather than creating a second extraction path.
 - [x] Embedded/external delivery variants for one raster key merge without changing identity; generic attachment checks GLB framing, Khronos output, buffer ranges, reciprocal font/raster identity, artifact hash, and immutable copied views while package semantics remain module-owned.
@@ -455,7 +477,7 @@ Deliver:
 
 Exit only when the complete horizontal corpus is byte-exact through the source and reduced-font HarfRust paths, the independent HarfBuzz oracle agrees under the documented normalization policy, and Node/Chromium/Vitexec paragraph outputs are deterministic. Any genuine mismatch in the retained SFNT profile, UTF-16 clustering, language selection, variation handling, glyph-width assumptions, or line layout blocks rendering work.
 
-Large-coverage raster paging remains in Milestone 13. Vertical-form source tables must survive baking when present, but vertical shaping/layout remains deferred.
+Large-coverage raster paging remains in Milestone 14. Vertical-form source tables must survive baking when present, but vertical shaping/layout remains deferred.
 
 ### 5.4 closure checklist
 
@@ -541,7 +563,7 @@ Deliver:
 - accepted ADRs and updated extension schemas;
 - an autoresearch baseline with optimization campaigns still disabled.
 
-Milestone 7 authorizes implementation of the release rasters; it does not authorize a package release.
+Milestone 7 authorizes implementation of the remaining v0 rasters; it does not authorize a package release.
 
 ### 7.1 closure checklist
 
@@ -566,7 +588,7 @@ Milestone 7 authorizes implementation of the release rasters; it does not author
 - [x] Reuse the exact showcase definitions through headless conformance and the admitted Vitexec product probe, then record reviewed exact conformance evidence.
 - [x] Record a separate environment-labeled live performance observation; conformance execution duration is never presented as renderer cost.
 
-## Milestone 8 — MSDF release raster
+## Milestone 8 — MTSDF raster
 
 Deliver:
 
@@ -592,15 +614,15 @@ Exit only when MSDF is credible as the general-purpose recommendation across the
 - [x] Add deterministic unit, structured integration, malformed-input, and coverage-guided fuzz evidence for the owned core.
 - [x] Record raw/optimized/gzip/Brotli candidate-core Wasm size through a reproducible freshness-checked package script.
 - [x] Record cold/warm full-font generation cost after the owned generator and Fontations provider are integrated; Inter produces 2,915 glyphs with an identical checksum and current scalar observations of 45.38 seconds cold and 48.13 seconds warm.
-- [x] Ship the Binaryen-optimized generator and generated ABI as package resources, with a zero-import admission kernel and one generated progress callback on the full artifact baker; validate the complete nested contract in TypeScript, copy borrowed RGBA8 before request release, and pass all seven native-oracle identities plus forged ownership, malformed host input, stale allocation, and cleanup cases through that host.
+- [x] Package the Binaryen-optimized generator and generated ABI as repository resources, with a zero-import admission kernel and one generated progress callback on the full artifact baker; validate the complete nested contract in TypeScript, copy borrowed RGBA8 before request release, and pass all seven native-oracle identities plus forged ownership, malformed host input, stale allocation, and cleanup cases through that host.
 - [x] Measure the generator host and Wasm independently under reviewed size ceilings, and provide a host-labeled cold/warm seven-case benchmark command whose hashes must pass before timings publish.
-- [x] Compare scalar, auto-vectorized, and explicit `simd128` kernels over exact quality hashes, the complete Inter pass, representative browser calls, allocation counts, and raw/optimized/gzip/Brotli size; retain one default implementation and no public toggle. Scalar remains the sole bounded-runtime kernel because it is fastest on the current Node and Chromium seven-case corpus. Explicit SIMD's 5.7% complete-Inter stress win remains checked item 8.6 evidence rather than a second published artifact.
+- [x] Compare scalar, auto-vectorized, and explicit `simd128` kernels over exact quality hashes, the complete Inter pass, representative browser calls, allocation counts, and raw/optimized/gzip/Brotli size; retain one default implementation and no public toggle. Scalar remains the sole bounded-runtime kernel because it is fastest on the current Node and Chromium seven-case corpus. Explicit SIMD's 5.7% complete-Inter stress win remains checked item 8.6 evidence rather than a second packaged artifact.
 
 The [MTSDF generator admission](../planning/mtsdf-generator-admission.md) records why no published candidate is accepted unchanged. The implementation is repository-owned; native Chlumsky `msdfgen` is the independent quality oracle and does not ship in browser packages. Item 8.1 is closed with the scalar production boundary as the single default. The internal `simd128-experiment` Cargo feature remains non-shipping evidence and is not a JavaScript option, alternate package artifact, or runtime branch.
 
 ### 8.2 fixed-baker checklist
 
-- [x] Compose the admitted scalar kernel with the shared Fontations provider, fallible atlas/record writer, GLB framing, content hashing, and generated direct-memory ABI in one published Wasm with one declared synchronous progress import for Worker-hosted long bakes.
+- [x] Compose the admitted scalar kernel with the shared Fontations provider, fallible atlas/record writer, GLB framing, content hashing, and generated direct-memory ABI in one packaged Wasm with one declared synchronous progress import for Worker-hosted long bakes.
 - [x] Fix one descriptor and one lossless linear RGBA8 MTSDF representation with exact page, padding, range, and plane-unit constants.
 - [x] Prove canonical Inter record/page identities, embedded/external byte parity, native/Wasm parity, deterministic output, and isolated baker/host size.
 - [x] Keep baker Wasm and generation dependencies outside shaping and rendering module graphs.
@@ -638,7 +660,7 @@ Item 8.3 is closed. Item 8.4 executes the same instanced TSL graph through WebGP
 
 ### 8.6 selective runtime bake, ABI, and performance checklist
 
-Runtime baking is a supported delivery path, not merely a missing-asset recovery mechanism. Callers may deliberately generate Bitmap or MTSDF atlases in the module Worker, but interactive use must not require rasterizing an entire large face when the application knows its bounded coverage. Coverage selection reduces raster work only: the complete shaping font, font-local glyph IDs, and HarfRust behavior remain unchanged until Milestone 17 proves true source subsetting and shaping closure.
+Runtime baking is a supported delivery path, not merely a missing-asset recovery mechanism. Callers may deliberately generate Bitmap or MTSDF atlases in the module Worker, but interactive use must not require rasterizing an entire large face when the application knows its bounded coverage. Coverage selection reduces raster work only: the complete shaping font, font-local glyph IDs, and HarfRust behavior remain unchanged until Milestone 18 proves true source subsetting and shaping closure.
 
 - [x] Expose authenticated integer MTSDF `emSize` and full `pixelRange` controls with bounds `1..=1022` and `1..=1020`, `planeUnitsPerEm = emSize`, and `ceil(pixelRange / 2)` field padding. Omitted or partial values resolve against 64/8, explicit 64/8 retains the legacy descriptor/key, and non-default descriptors carry both effective values. Real 155-glyph subset bakes at 32/4 and 32/6 pass artifact validation; choosing a new default remains quality/payload benchmark work.
 - [x] Add one typed runtime-bake options contract shared by explicit runtime delivery and automatic fallback. It carries the selected raster descriptor plus bounded coverage seeds, rejects duplicates/out-of-range values deterministically, and reports missing raster coverage explicitly before batch publication.
@@ -648,13 +670,13 @@ Runtime baking is a supported delivery path, not merely a missing-asset recovery
 - [x] Keep Wasm direct-memory values little-endian because WebAssembly linear memory is normatively little-endian, while retaining explicit format-mandated byte order in GLB, KTX2, SFNT, and other portable serialized artifacts. Sparse raster coverage uses the same explicit little-endian bit numbering and zero terminal padding.
 - [x] Regenerate every affected ABI JSON file, optimized Wasm resource, baked fixture, identity, size record, and package digest; run the complete Rust, TypeScript, Node/Worker parity, artifact-validation, renderer, conformance, and live-product regression sweep before accepting the new boundary.
 - [x] Instrument the baker by phase and publish small, medium, and complete-face results for glyph selection, outline extraction, MTSDF texel generation, packing, texture-payload encoding, container serialization, Wasm-to-Worker copying, peak memory, and output bytes. Reports include glyphs, generated texels, edges visited, and throughput rather than one opaque wall-clock duration; direct Wasm and the real serial Worker retain exact artifact identity.
-- [x] Optimize the measured dominant phase without weakening native-msdfgen quality or deterministic artifact gates. Texel generation dominates, so an equivalent four-texel scalar tile and an adjacent-texel SIMD line-distance kernel were compared against the unchanged scalar quadratic/cubic lane fallback. Every exact oracle and complete-Inter identity remains unchanged. Adjacent SIMD improves the bounded Node and Chromium corpora by 2.4% and 0.9%, but is indistinguishable from scalar over complete Inter warm execution while adding 20.7% optimized and 11.4% Brotli bytes. Scalar tile improves bounded Node by 10.1% but regresses Chromium by 1.5% and complete Inter warm by 1.4% while adding 20.0% optimized and 10.9% Brotli bytes. Machine-checked structured observations retain those tradeoffs. Both candidates are rejected as universal runtime defaults, remain non-shipping experiment features, and scalar Wasm remains the single shipped kernel. TypeGPU/WebGPU compute remains research until identical-work evidence can justify its device and readback complexity.
+- [x] Optimize the measured dominant phase without weakening native-msdfgen quality or deterministic artifact gates. Texel generation dominates, so an equivalent four-texel scalar tile and an adjacent-texel SIMD line-distance kernel were compared against the unchanged scalar quadratic/cubic lane fallback. Every exact oracle and complete-Inter identity remains unchanged. Adjacent SIMD improves the bounded Node and Chromium corpora by 2.4% and 0.9%, but is indistinguishable from scalar over complete Inter warm execution while adding 20.7% optimized and 11.4% Brotli bytes. Scalar tile improves bounded Node by 10.1% but regresses Chromium by 1.5% and complete Inter warm by 1.4% while adding 20.0% optimized and 10.9% Brotli bytes. Machine-checked structured observations retain those tradeoffs. Both candidates are rejected as universal runtime defaults, remain experiment features, and scalar Wasm remains the single merged v0 kernel. TypeGPU/WebGPU compute remains research until identical-work evidence can justify its device and readback complexity.
 - [x] Select pinned dynamic Talc from the complete optimized Wasm corpus: byte-identical behavior retains the existing ownership/error/reused-Worker tests while saving 46,610 raw, 15,121 gzip, and 12,121 Brotli bytes versus `dlmalloc`. Reject a 128 MiB global arena because it raises initial memory to about 129 MiB for no meaningful transfer saving; keep request-local scratch arenas as profiling-led future work only.
 - [x] Complete the final adversarial Milestone 6/8 review with no unresolved actionable findings.
 
 Item 8.6 and Milestone 8 are closed. The combined closure review retained complete traces under the ignored repository review cache, every actionable finding was independently reproduced and remediated, the exact package-size identity and fail-closed provenance are current, and the complete package, benchmark-unit, headless conformance, packed-consumer, and documentation gates pass on the recorded host.
 
-## Milestone 9 — Slug release renderer
+## Milestone 9 — Slug renderer
 
 Deliver:
 
@@ -676,18 +698,18 @@ Exit only when Slug satisfies its outline-accurate large/zoomed-text role withou
 - [x] Emit and validate native RGBA16F curve pages, R32UI headers, and exact R16UI references in embedded or independently authenticated external packaging, with byte-identical resources between forms.
 - [x] Load a freshly baked external core GLB, external Slug companion, and external curve/header/reference resources through public `FontLoader`; public `Text` renders byte-identically to the embedded fixture on WebGPU and forced WebGL2 while exact fetch counts prove every URL-aware path was exercised.
 - [x] Copy and adapt the reviewed Three Flatland coverage graph to the installed Three.js/TSL version, preserving bounded dynamic traversal, stable quadratic solving, loop-invariant hoists, direct integer addressing, page runs, transactional GPU ownership, and non-Slug import isolation.
-- [x] Retain the fill-only material and reject outline/shadow paint before allocation or mutation. The copied dynamic exact-distance outline was proven correct but measured at `2.44×–4.33×` fill-only GPU time, then removed rather than shipped. The [outline research record](../planning/slug-outline-research.md) preserves the rejected architecture and bounded-approximation gate.
-- [x] Retain 36 dual-backend/DPR release-role cells for large text, 1,024-ppem magnification, Arabic, Devanagari, CJK, clipping, affine transform, and projection zoom, with source outlines as the quality authority and historical prior-art transforms as labeled invariants only.
+- [x] Retain the fill-only material and reject outline/shadow paint before allocation or mutation. The copied dynamic exact-distance outline was proven correct but measured at `2.44×–4.33×` fill-only GPU time, then removed rather than merged. The [outline research record](../planning/slug-outline-research.md) preserves the rejected architecture and bounded-approximation gate.
+- [x] Retain 36 dual-backend/DPR raster-role cells for large text, 1,024-ppem magnification, Arabic, Devanagari, CJK, clipping, affine transform, and projection zoom, with source outlines as the quality authority and historical prior-art transforms as labeled invariants only.
 - [x] Retain the seven-source, 28-cell source-quality matrix and the complete 1,402-icon Font Awesome grid through Bitmap, MTSDF, and Slug with two-axis panning, overscan virtualization, fixed labels, logarithmic scaling, and zero missing glyphs through the final catalog entry.
 - [x] Reproduce the applicable prior-fork baseline improvements: dynamic curve loops, generated-shader hoisting, compact exact band storage, complete band-list deduplication, and exact quadratic bounds. Measure structural root branching instead of assuming it; retain and reject the candidate when the existing generated control flow wins overall.
-- [x] Retain the initial fixed-32 calibration, then evaluate adaptive `{16,32,64}`, capped `{16,32}`, packed-hull, and per-root challengers through precommitted staged gates. A candidate rejected by an authenticated artifact or residency gate makes no pixel or GPU claim; every candidate that reaches product measurement retains exact quality and a complete dual-backend decision. Rejected candidates remain in auditable evidence/commits and do not add shipping format or shader branches.
+- [x] Retain the initial fixed-32 calibration, then evaluate adaptive `{16,32,64}`, capped `{16,32}`, packed-hull, and per-root challengers through precommitted staged gates. A candidate rejected by an authenticated artifact or residency gate makes no pixel or GPU claim; every candidate that reaches product measurement retains exact quality and a complete dual-backend decision. Rejected candidates remain in auditable evidence/commits and do not add merged format or shader branches.
 - [x] Publish Slug payload, upload-frame, first-draw, steady CPU/GPU, exact curve/header/reference residency, isolated runtime/baker sizes, and seven-source performance matrices; assert Bitmap- and MTSDF-only graphs exclude Slug runtime, shaders, workers, and baker code.
 
 Milestone 9 is closed. Additional Slug optimization hypotheses are future measured research and do not reopen the accepted V0 renderer unless they change a checked contract.
 
-## Milestone 10 — harden the first shippable release
+## Milestone 10 — harden the merged v0 baseline
 
-Milestone 10 is closed. Item 10.1 established the required renderer-neutral transaction and Three.js adapter parity, item 10.2 moved resident shaping, layout, paint planning, raster staging, and atomic publication into the Three.js object-update lifecycle without warm consumer readiness waits, item 10.3 added bounded retained instance capacity to all three first-party rasters, item 10.4 proved the published extension boundary with a private external consumer package, item 10.5 removed benchmark workarounds and retained complete dual-backend Presentation evidence, and item 10.6 completed release review and signed stacked delivery. The release pass makes every live workload a readable consumer example with one typed default/control/font/surface policy, isolates low-level conformance targets, and records any concrete package escape hatch in the API fixture before proposing implementation. Every example now owns `workloads/<id>/{definition,scene}.ts`: definitions carry exact Main/Presentation defaults and route policy, scenes show the public `@pmndrs/text` and Three.js usage, consumers import exact files rather than barrels, and the root catalog only preserves order and lookup. The workload audit records all nine live examples individually: each uses published `Text`, loader, registry, raster, and runtime-bake surfaces, while direct Wasm remains an explicit ABI target. No missing common package API is currently proven. Live Bitmap, MTSDF, and Slug adapters and metadata are isolated under `techniques`; generic renderer ownership and finite target machinery no longer depend on one another. Non-target retained comparison and isolated preview modules now live with conformance surfaces and probes, while true targets and reusable low-level references keep distinct hierarchies. Main/Presentation composition dispatches through named benchmark surfaces while preserving one shared `Harness` identity, canvas, renderer, and telemetry history across route changes. All seven retained comparison definitions own app-private construction, layout, animation, and retained-configuration hooks. Icon Grid also owns its per-mount active pool assignment, recycling, pan, frame smoothing, refresh suspension, visibility, and metrics state behind a narrow host lifecycle adapter. Benchmark Ipsum and Advanced Shaping authored state live beside the other workloads; explicit Advanced Shaping font selection now reaches the authored scene, and retained comparison font transactions keep layout measurement suspended until every replacement `Text` generation is ready. The complete live lane passed every sequential Bitmap/MTSDF/Slug workload, both renderer backends, Presentation exclusivity, the timed demo, and React Doctor at 100/100. A delayed-peer probe confirmed that the paired MSDF / Slug scene needs comparison-local target coordination; retaining the last complete target pair, publishing both objects in one task, and rolling back failures resolves it without a grouped public transaction. The public API is accepted for V1, external raster and baker authoring is documented, and renderer-wide batching across separate `Text` objects remains explicitly outside this milestone.
+Milestone 10 is closed as the merged v0 baseline. Item 10.1 established the required renderer-neutral transaction and Three.js adapter parity, item 10.2 moved resident shaping, layout, paint planning, raster staging, and atomic publication into the Three.js object-update lifecycle without warm consumer readiness waits, item 10.3 added bounded retained instance capacity to all three first-party rasters, item 10.4 proved the public extension boundary with a private external consumer package, item 10.5 removed benchmark workarounds and retained complete dual-backend Presentation evidence, and item 10.6 completed the v0 review and signed stacked merge. Nothing in this milestone was published as a release or declared v1. Its evidence is the migration baseline for milestone 11, which may replace the v0 API while preserving proven shaping, raster, lifecycle, and rendering behavior.
 
 ### 10.1–10.6 closure checklist
 
@@ -695,7 +717,7 @@ Milestone 10 is closed. Item 10.1 established the required renderer-neutral tran
 - [x] Staging never mutates committed state, commit is synchronous and infallible, failure or abort preserves the live generation, and batch/stage cleanup is idempotent across Bitmap, MTSDF, Slug, and the external proof.
 - [x] Warm resident updates publish before Three.js child traversal without consumer `await text.ready`; cold font, shaper, and raster-page preparation remains asynchronous and Suspense-owned.
 - [x] Same-capacity replacement updates every glyph identity and parallel instance field in place; shrink, exact-capacity growth, fragmented dirty ranges, overflow replacement, topology changes, and stale generations have deterministic tests.
-- [x] The private external package bakes, packages, loads, renders, updates, overflows, aborts, and disposes through published entry points without a core kind switch or undocumented import.
+- [x] The private external package bakes, packages, loads, renders, updates, overflows, aborts, and disposes through public package entry points without a core kind switch or undocumented import.
 - [x] Icon Grid reuses its Text pool across all 1,402 glyphs and all three techniques without blank recycling, missing glyphs, warnings, unhandled rejections, or avoidable GPU-object churn.
 - [x] WebGPU and forced WebGL complete every Presentation workload sequentially and in timed demo mode with visible text, one renderer, retained canvas/graph identity, no warm loader flash, no overlapping jobs, and recovery after success, failure, abort, technique/font changes, and navigation.
 - [x] Allocation/GC traces, approximately-60-Hz cadence sweeps, React Doctor 100/100, screenshots, complete repository checks, package-size evidence, OKF validation, signed stack history, accurate PR bodies, and green CI are retained.
@@ -710,32 +732,73 @@ Deliver:
   exact MTSDF padded base texture-array allocation;
 - an editable realtime MSDF / Slug comparison that renders equal offscreen targets and a GPU-only signed-delta heatmap, plus interactive comparison scenarios for all three techniques with correctness/visual gates and downloadable raw results;
 - second-font registration and raster-binding smoke fixtures;
-- release-level conformance, browser, GPU, memory, package-size, and malformed-input suites;
+- v0 conformance, browser, GPU, memory, package-size, and malformed-input suites;
 - reviewed public API, external raster and baker authoring guidance, and versioned extension schemas;
 - matching Three.js and React examples with no React-only font behavior;
 - renderer-neutral prepared raster batches and resource ownership extracted only after Slug proves the shared requirements, with the existing Three.js implementation retained as an adapter over the direct integration boundary.
 
-Milestone 10 passes this gate. Additive renderer and layout work begins with Milestone 11 and must not reopen the accepted
-V1 contracts without new evidence.
+Milestone 10 passes the merged v0 evidence gate. Milestone 11 may replace its API where the target v1 contracts require it,
+while behavioral regressions still require new evidence.
 
-## Additive work after the release renderer set
+## Path from merged v0 to v1 and later work
 
-The order below preserves lanes without pretending the work is part of V1:
+Milestone 11 earns the v1 API and integration boundary. Later milestones remain post-v1 work unless maintainers explicitly
+move them into the release gate:
 
 | Order | Workstream                                          | Effort  | Why next                                                                                                                                                           |
 | ----: | --------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-|    11 | Editorial flow regions and mixed-raster composition | XL      | Add responsive columns and exclusions, then prove bitmap, MTSDF, and Slug over one positioned layout in a live editorial benchmark.                                |
-|    12 | Mixed-font spans and explicit font fallback         | XL      | Extend the multi-font identity smoke proof into paragraph behavior.                                                                                                |
-|    13 | Large-coverage CJK raster paging and icons          | XL      | Add content-aware paging, independently resident resources, and paired CJK/icon correctness and payload gates without reopening item 5.4 shaping semantics.        |
-|    14 | Color emoji                                         | XL      | Extend Slug vector paint/layers and bitmap color resources without changing shaping or layout.                                                                     |
-|    15 | Raster effects and expanded recommendations         | L       | Test the bounded shared-traversal Slug outline approximation, then extend accepted outlines, colorization, shadows, and projected-size guidance with measurements. |
-|    16 | Measured optimization campaigns                     | ongoing | Activate autoresearch only with strict correctness and visual gates.                                                                                               |
-|    17 | Advanced font compiler units                        | XL each | Add general subsetting, remapping, normalized lookups, or SIMD only from evidence.                                                                                 |
-|    18 | Vertical writing                                    | XL      | Add Japanese top-to-bottom shaping, orientation, column layout, interaction geometry, and three-renderer evidence after complete CJK paging.                       |
+|    11 | Renderer-neutral batched core and engine targets    | XL      | Extract the accepted many-item API, preserve Three.js, and prove Bitmap/MTSDF/Slug through Wayfare and raw TypeGPU.                                                |
+|    12 | Editorial flow regions and mixed-raster composition | XL      | Add responsive columns and exclusions, then prove bitmap, MTSDF, and Slug over one positioned layout in a live editorial benchmark.                                |
+|    13 | Mixed-font spans and explicit font fallback         | XL      | Extend the multi-font identity smoke proof into paragraph behavior.                                                                                                |
+|    14 | Large-coverage CJK raster paging and icons          | XL      | Add content-aware paging, independently resident resources, and paired CJK/icon correctness and payload gates without reopening item 5.4 shaping semantics.        |
+|    15 | Color emoji                                         | XL      | Extend Slug vector paint/layers and bitmap color resources without changing shaping or layout.                                                                     |
+|    16 | Raster effects and expanded recommendations         | L       | Test the bounded shared-traversal Slug outline approximation, then extend accepted outlines, colorization, shadows, and projected-size guidance with measurements. |
+|    17 | Measured optimization campaigns                     | ongoing | Activate autoresearch only with strict correctness and visual gates.                                                                                               |
+|    18 | Advanced font compiler units                        | XL each | Add general subsetting, remapping, normalized lookups, or SIMD only from evidence.                                                                                 |
+|    19 | Vertical writing                                    | XL      | Add Japanese top-to-bottom shaping, orientation, column layout, interaction geometry, and three-renderer evidence after complete CJK paging.                       |
 
-### Milestone 11 — editorial flow regions and mixed-raster composition
+### Milestone 11 — renderer-neutral batched core and engine targets
 
-This post-V1 milestone adds an ordered flow-region planner without weakening the rectangular paragraph fast path. Each line band resolves one or more usable horizontal slots after explicit drop-cap, image, callout, or known-geometry exclusions are subtracted. Shaped clusters fill those slots using existing safe-break and batched boundary-reshape machinery.
+This milestone implements the authoritative [README](../../README.md), [core text API](../planning/core-api.md),
+and [engine integration contract](../planning/engine-integration-contract.md). It removes Three.js from portable entry
+points while preserving the accepted shaping, paragraph, artifact, raster, and visible-generation behavior.
+
+Deliver:
+
+- explicit runtime and font loading, same-technique ordered font stacks, technique-declared paragraph batches, and per-update synchronous or asynchronous preparation;
+- desired-state paragraph handles covering multiline text, labels, and font-backed icons without separate public lifecycles;
+- batch-owned core handles, immutable desired-state recreation snapshots, retained font leases, and terminal non-recursive disposal rules;
+- explicit paragraph batches as application-owned render-phase boundaries with default or explicit per-buffer glyph capacity and deterministic order;
+- `fixed` capacity overflow detected after shaping, rejected before publication, and reported by render-loop adapters without escaping rendering or retrying unchanged failures;
+- explicit capacity changes that preserve core batch, paragraph, Three group, and text identities while replacing canonical and target storage transactionally;
+- core-owned raster-resource partitioning, typed technique bindings, stable instance slots, overflow chunks, technique packing, dirty ranges, resolved variants, and ordered glyph runs;
+- canonical technique-defined CPU instance storage with adjacent dirty ranges and live glyph-run ranges for engine-owned buffer synchronization;
+- atomic runtime revisions spanning every paragraph batch touched at one synchronization point;
+- owned glyph snapshots and topology-guarded displayed-origin writes without animation or physics policy in core;
+- one target staging contract whose fallible work preserves the live revision and whose commit is synchronous
+  at an engine-owned safe frame boundary;
+- Three.js/TSL and React Three Fiber rebuilt as adapters with reusable canonical technique shaders, custom programs,
+  optional effects, program-owned draw compilation, WebGPU/WebGL2 parity, and actual many-item batching;
+- reusable Three `Text` objects that survive group disposal, bind fresh core handles elsewhere, and never inherit or transfer stale batch resources;
+- a complete direct TypeGPU engine rendering Bitmap, MTSDF, and Slug into caller-owned passes without Three.js or TSL in
+  portable graphs, plus a Wayfare target reusing its programs;
+- Three.js, React Three Fiber, TypeGPU, Wayfare, and gpucat integrations that can live as independent packages consuming
+  public core and technique exports without privileged subpaths;
+- a pinned gpucat proof covering public buffer/texture realization, partial dirty-range uploads, instanced draw ordering,
+  transforms, lifecycle, and reusable Slug shader access without changing core;
+- shared TypeGPU raster programs across compatible WebGPU hosts without moving scene or pass lifecycle into the technique;
+- a Three.js + TypeGPU proof that GPU-authoring choice does not own text or scene lifecycle;
+- exact package-graph, deterministic, Worker, lifecycle, browser, GPU, allocation, size, documentation, and OKF evidence.
+
+Only after these gates pass may maintainers declare and publish v1.
+
+The [renderer-neutral extraction plan](../planning/engine-integration-boundary.md) owns the issue sequence and proof matrix.
+Engine transforms, scene composition, pass placement, command encoding, GPU synchronization, and device lifecycle remain
+adapter-owned. Core owns physical glyph grouping and ordered variant-bearing text runs; programs own compatible final draws.
+
+### Milestone 12 — editorial flow regions and mixed-raster composition
+
+This post-v1 milestone adds an ordered flow-region planner without weakening the rectangular paragraph fast path. Each line band resolves one or more usable horizontal slots after explicit drop-cap, image, callout, or known-geometry exclusions are subtracted. Shaped clusters fill those slots using existing safe-break and batched boundary-reshape machinery.
 
 Deliver:
 
@@ -748,9 +811,9 @@ Deliver:
 
 Contour-tight glyph-ink wrapping, arbitrary rendered-pixel occlusion, balanced columns, automatic hyphenation, vertical flow, and a frozen public flow API remain deferred until the initial integration produces evidence. The [editorial flow research concept](../planning/editorial-flow-layout.md) defines the proposed internal model, benchmark composition, comparison rules, and acceptance gates.
 
-### Milestone 13 — large-coverage CJK raster paging and icons
+### Milestone 14 — large-coverage CJK raster paging and icons
 
-This milestone begins only after the Latin-first V1 renderer gate. Item 5.4 has already proven horizontal CJK shaping and paragraph semantics; this later milestone scales raster coverage, paging, residency, and icon delivery without changing those results. CJK and icons share the page-scale implementation while retaining separate semantic fixtures.
+This milestone begins only after the Latin-first v1 renderer gate. Item 5.4 has already proven horizontal CJK shaping and paragraph semantics; this later milestone scales raster coverage, paging, residency, and icon delivery without changing those results. CJK and icons share the page-scale implementation while retaining separate semantic fixtures.
 
 Deliver:
 
@@ -767,9 +830,9 @@ Deliver:
 
 Vertical writing remains deferred. The milestone retains vertical-form source data and tests that it survives baking, but does not add vertical paragraph layout.
 
-### Milestone 17 — advanced font compiler units
+### Milestone 18 — advanced font compiler units
 
-This milestone turns declarative language/script/text coverage into compiler-produced shaping units only after Milestone 13 proves the lookup and residency model without changing glyph identity. It computes transitive shaping closure, preserves required locale-sensitive behavior, optionally remaps glyph IDs within each unit, and emits authenticated family-directory coverage metadata. Units keep independent font handles and never masquerade as one glyph namespace.
+This milestone turns declarative language/script/text coverage into compiler-produced shaping units only after Milestone 14 proves the lookup and residency model without changing glyph identity. It computes transitive shaping closure, preserves required locale-sensitive behavior, optionally remaps glyph IDs within each unit, and emits authenticated family-directory coverage metadata. Units keep independent font handles and never masquerade as one glyph namespace.
 
 Deliver:
 
@@ -779,9 +842,9 @@ Deliver:
 - normalized family-directory lookup with locale preference, explicit fallback, missing-coverage diagnostics, and mixed-unit paragraph tests;
 - complete source-versus-unit shaping, layout, transport, decoded-memory, page, and GPU-residency evidence.
 
-### Milestone 18 — vertical writing
+### Milestone 19 — vertical writing
 
-This post-V1 milestone adds Japanese top-to-bottom text with right-to-left
+This post-v1 milestone adds Japanese top-to-bottom text with right-to-left
 column progression after large-coverage CJK paging makes the result usable with
 a complete font. It interprets the vertical tables already preserved by the
 baker, proves HarfRust against HarfBuzz with vertical direction and font
