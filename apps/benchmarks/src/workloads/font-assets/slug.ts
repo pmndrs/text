@@ -1,5 +1,4 @@
-import { FontRegistry, defineRaster } from '@pmndrs/text';
-import { slug, type SlugModule } from '@pmndrs/text/raster/slug';
+import { slug as slugTechnique } from '@pmndrs/text/three/slug';
 
 import amiriCompressedFontUrl from '../../../fixtures/rendering/amiri-slug.font.glb.gz?url';
 import dancingScriptCompressedFontUrl from '../../../fixtures/rendering/dancing-script-slug.font.glb.gz?url';
@@ -18,14 +17,18 @@ import type {
   BenchmarkFontAsset,
   BenchmarkFontAssetRequest,
 } from './contracts';
-import { createFontDeliveryMetrics, measuredRuntimeRaster, loadRuntimeCoreFont, sourceUrlForFixture } from './runtime';
+import {
+  createFontDeliveryMetrics,
+  loadBakedFont,
+  loadSourceFont,
+  measuredRuntimeFontBake,
+  measuredRuntimeRaster,
+  sourceUrlForFixture,
+} from './runtime';
 
 export type { BakedSlugArtifactSource, FontDeliveryMetrics } from './contracts';
 
-export type SlugFontAsset = Omit<BenchmarkFontAsset, 'raster' | 'technique'> & {
-  readonly technique: 'slug';
-  readonly raster: SlugModule;
-};
+export type SlugFontAsset = Extract<BenchmarkFontAsset, { readonly technique: 'slug' }>;
 
 interface SlugFixtureManifest {
   readonly fontFixture: BenchmarkFontFixture;
@@ -69,56 +72,54 @@ export async function loadSlugFontAsset(
   signal?.throwIfAborted();
   const metrics = createFontDeliveryMetrics(delivery);
   if (delivery === 'runtime') {
-    const font = await loadRuntimeCoreFont({
+    const loaded = await loadSourceFont({
       source: sourceUrlForFixture(fixture),
-      metrics,
-      registry: registry ?? new FontRegistry(),
+      raster: { technique: measuredSlugTechnique(metrics, onProgress) },
+      runtimeBake: measuredRuntimeFontBake(metrics, onProgress),
+      registry,
       ...(signal === undefined ? {} : { signal }),
-      ...(onProgress === undefined ? {} : { onProgress }),
     });
     return {
       technique: 'slug',
       artifactBytes: metrics.coreArtifactBytes,
       atlasGpuBytes: 0,
       compressedBytes: metrics.sourceFontBytes,
-      font,
+      loaded,
       metrics,
-      raster: measuredSlugRaster(metrics, onProgress),
     };
   }
   const source = request.bakedArtifact ?? fixtureManifestSource(fixture);
   const artifact = await fetchAuthenticatedGzipAsset(source.url, source, 'Slug font fixture', signal);
-  let font: Awaited<ReturnType<FontRegistry['registerAsset']>> | undefined;
-  try {
-    font = await (registry ?? new FontRegistry({ maxArtifactBytes: source.uncompressed.bytes })).registerAsset(
-      artifact,
-    );
-    signal?.throwIfAborted();
-    return {
-      technique: 'slug',
-      artifactBytes: artifact.byteLength,
-      atlasGpuBytes: 0,
-      compressedBytes: source.compressed.bytes,
-      font,
-      metrics,
-      raster: slug,
-    };
-  } catch (error) {
-    font?.dispose();
-    throw error;
-  }
+  const loaded = await loadBakedFont({
+    artifact,
+    raster: { technique: slugTechnique },
+    registry,
+    ...(signal === undefined ? {} : { signal }),
+  });
+  return {
+    technique: 'slug',
+    artifactBytes: artifact.byteLength,
+    atlasGpuBytes: 0,
+    compressedBytes: source.compressed.bytes,
+    loaded,
+    metrics,
+  };
+}
+
+/**
+ * Clones the technique with an instrumented runtime baker. The Three adapter resolves a program by technique ID rather
+ * than object identity, so the clone still renders while reporting the same raster delivery evidence.
+ */
+function measuredSlugTechnique(
+  metrics: BenchmarkFontAsset['metrics'],
+  onProgress?: Extract<BenchmarkFontAssetRequest, { readonly technique: 'slug' }>['onProgress'],
+): typeof slugTechnique {
+  const runtimeBaker = measuredRuntimeRaster(slugTechnique.runtimeBaker, metrics, onProgress);
+  return { ...slugTechnique, ...(runtimeBaker === undefined ? {} : { runtimeBaker }) };
 }
 
 function fixtureManifestSource(fixture: BenchmarkFontFixture): BakedSlugArtifactSource {
   const manifest = fixtureManifests.get(fixture);
   if (manifest === undefined) throw new RangeError(`Unknown Slug font fixture: ${fixture}`);
   return { url: compressedFontUrls[fixture], compressed: manifest.compressed, uncompressed: manifest.uncompressed };
-}
-
-function measuredSlugRaster(
-  metrics: BenchmarkFontAsset['metrics'],
-  onProgress?: Extract<BenchmarkFontAssetRequest, { readonly technique: 'slug' }>['onProgress'],
-): SlugModule {
-  const runtimeBaker = measuredRuntimeRaster(slug.runtimeBaker, metrics, onProgress);
-  return defineRaster({ ...slug, ...(runtimeBaker === undefined ? {} : { runtimeBaker }) });
 }

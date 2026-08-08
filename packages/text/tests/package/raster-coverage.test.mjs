@@ -39,7 +39,7 @@ test('normalizes the complete Bitmap Worker option boundary without dropping cov
   assert.throws(() => normalizeBitmapOptions({ strikes: [16], unknown: true }), /unknown property/);
 });
 
-test('authenticates identical bounded coverage in Bitmap and MTSDF descriptors', async () => {
+test('authenticates identical bounded coverage in Bitmap and MSDF descriptors', async () => {
   const coverage = {
     unicodeRanges: [{ start: 65, end: 90 }],
     text: 'AB',

@@ -1,9 +1,10 @@
 import type { FontHandle } from './identity.js';
 import type { ParagraphLayout, ParagraphMeasurement } from './layout.js';
-import type { FontFeature, ResolvedFontFeature } from './text.js';
+import type { FontFeature, ResolvedFontFeature } from './font-feature.js';
 import type { RegisteredFont } from './font.js';
 import type { BidiAnalysisViews, ReshapeRange, RuntimeShaper, ShapeBatchRequest, ShapedBatchViews } from './shaper.js';
 import { analyzeUnicodeText, type UnicodeTextAnalysis } from './internal/unicode.js';
+import { resolveSpanCascade, type SpanCascadeEntry } from './internal/span-cascade.js';
 
 /**
  * A layout-system-neutral axis constraint.
@@ -59,8 +60,19 @@ export interface Paragraph {
   measure(constraints?: ParagraphConstraints): ParagraphMeasurement;
   /** Resolve the final box and materialize positioned glyph output. */
   layout(constraints?: ParagraphConstraints): ParagraphLayout;
+  /**
+   * Shaped glyph identity, before line breaking and positioning. A caller resolving font fallback needs to know which
+   * clusters shaped to `.notdef` and nothing else, and that answer must not depend on where lines happen to break.
+   */
+  shaped(): ShapedGlyphIdentity;
   update(input: ParagraphInput): void;
   dispose(): void;
+}
+
+/** Glyph identity in shaping order, covering every run of the paragraph. */
+export interface ShapedGlyphIdentity {
+  readonly glyphIds: Uint16Array;
+  readonly clusters: Uint32Array;
 }
 
 export interface ParagraphEngine {
@@ -88,10 +100,8 @@ interface StyleSegment {
   readonly style: ResolvedStyle;
 }
 
-interface ResolvedSpanStyle {
-  readonly index: number;
-  readonly start: number;
-  readonly end: number;
+/** The shaping properties one span states, before the cascade merges them. */
+interface StatedSpanStyle {
   readonly font?: FontHandle;
   readonly fontSize?: number;
   readonly lineHeight?: number;
@@ -99,12 +109,6 @@ interface ResolvedSpanStyle {
   readonly language?: string;
   readonly direction?: 'auto' | 'ltr' | 'rtl';
   readonly features?: readonly ResolvedFontFeature[];
-}
-
-interface ActiveStyleValue<Value> {
-  readonly index: number;
-  readonly end: number;
-  readonly value: Value;
 }
 
 interface PreparedRun extends StyleSegment {
@@ -135,14 +139,28 @@ interface OwnedShape {
   readonly glyphFlags: Uint16Array;
 }
 
-interface MeasuredCluster {
-  readonly start: number;
-  readonly end: number;
-  readonly advance: number;
-  readonly safeBefore: boolean;
-  readonly style: ResolvedStyle;
-  readonly requiredBreak: boolean;
-  readonly hardBreak: boolean;
+/**
+ * Every extended grapheme cluster of the paragraph, as parallel arrays rather than one object per cluster. A paragraph
+ * holds tens of thousands of clusters and every update rebuilt all of them, which made short-lived cluster objects the
+ * largest single source of garbage on the layout path.
+ *
+ * The backing buffers are retained across updates by {@link measureClusters} and only ever grow, so a steady-state
+ * animation reuses them. `count` is the live length; the views are sliced to it, and the buffers behind them may be
+ * larger.
+ */
+interface MeasuredClusters {
+  readonly count: number;
+  readonly starts: Uint32Array;
+  readonly ends: Uint32Array;
+  /**
+   * Double precision. Line breaking accumulates a line advance from these one cluster at a time and the result is
+   * compared against the width limit, so rounding each cluster to single precision would move where lines break.
+   */
+  readonly advances: Float64Array;
+  /** {@link CLUSTER_SAFE_BEFORE}, {@link CLUSTER_REQUIRED_BREAK}, and {@link CLUSTER_HARD_BREAK}. */
+  readonly flags: Uint8Array;
+  /** Index into {@link PreparedParagraph.styles}, so a cluster carries its style without holding a reference. */
+  readonly styleIndexes: Uint32Array;
 }
 
 interface LineMetrics {
@@ -187,8 +205,13 @@ interface PreparedParagraph {
   readonly request: ShapeBatchRequest;
   readonly shape: OwnedShape;
   readonly ellipses: readonly PreparedEllipsis[];
-  readonly clusters: readonly MeasuredCluster[];
-  readonly clusterStarts: Uint32Array;
+  readonly clusters: MeasuredClusters;
+  /**
+   * Cluster index for every text offset, so resolving an offset to a cluster is a load rather than a binary search.
+   * Positioning resolves two offsets at every cluster boundary of every glyph, which made that search the hottest leaf
+   * in a browser profile of the layout path.
+   */
+  readonly clusterIndexAt: Uint32Array;
   readonly letterSpacingPrefix: Float64Array;
   readonly spacePrefix: Uint32Array;
 }
@@ -207,16 +230,23 @@ interface MeasuredPlan {
   readonly lines: readonly LinePlan[];
 }
 
-interface LineFragment {
-  readonly line: number;
-  readonly run: number;
-  readonly start: number;
-  readonly end: number;
-  readonly flags: number;
-  readonly level: number;
-  readonly ellipsis?: EllipsisPlan;
-  readonly reshape: boolean;
+/**
+ * A fragment under construction. {@link collectLineFragments} appends fragments in logical order, then fills the
+ * shaping flags and the reshape decision in place once the line's first and last fragments are known, and reorders the
+ * line's own range in place. Published fragments are read-only.
+ */
+interface LineFragmentDraft {
+  line: number;
+  run: number;
+  start: number;
+  end: number;
+  flags: number;
+  level: number;
+  ellipsis?: EllipsisPlan;
+  reshape: boolean;
 }
+
+type LineFragment = Readonly<LineFragmentDraft>;
 
 interface PositionedGeometry {
   readonly fontHandles: Uint32Array;
@@ -246,7 +276,16 @@ const PRODUCE_UNSAFE_TO_CONCAT = 0x40;
 const BEGINNING_OF_TEXT = 0x01;
 const END_OF_TEXT = 0x02;
 const GLYPH_UNSAFE_TO_BREAK = 0x01;
-const GLYPH_UNSAFE_TO_CONCAT = 0x02;
+/** The cluster starts at a shaping boundary that shaping did not mark unsafe to break. */
+const CLUSTER_SAFE_BEFORE = 0x01;
+/** Unicode line breaking requires a break after the cluster. */
+const CLUSTER_REQUIRED_BREAK = 0x02;
+/** The cluster is a hard line separator rather than drawable text. */
+const CLUSTER_HARD_BREAK = 0x04;
+/** A text offset that shaping treated as a run or cluster boundary. */
+const OFFSET_SHAPED_BOUNDARY = 0x01;
+/** A text offset that shaping marked unsafe to break at. */
+const OFFSET_UNSAFE_TO_BREAK = 0x02;
 const BIDI_BN = 9;
 const BIDI_B = 10;
 const BIDI_S = 11;
@@ -333,9 +372,20 @@ class ParagraphImpl implements Paragraph {
     return layout;
   }
 
+  shaped(): ShapedGlyphIdentity {
+    this.#assertActive();
+    const { shape, runs } = this.#prepared;
+    // The shaping request appends one ellipsis run per source run, clustered past the end of the text, so a caller
+    // inspecting glyph identity must not see them: they are how overflow is measured, not glyphs of this paragraph.
+    // Those runs are requested after every source run, so the first of them bounds the paragraph's own glyphs.
+    const end =
+      runs.length < shape.runGlyphStarts.length ? (shape.runGlyphStarts[runs.length] ?? 0) : shape.glyphIds.length;
+    return { glyphIds: shape.glyphIds.subarray(0, end), clusters: shape.clusters.subarray(0, end) };
+  }
+
   update(input: ParagraphInput): void {
     this.#assertActive();
-    this.#prepared = prepareParagraph(this.#shaper, input);
+    this.#prepared = prepareParagraph(this.#shaper, input, this.#prepared);
     this.#measurements.clear();
     this.#linePlans.clear();
     this.#positioning.clear();
@@ -390,20 +440,36 @@ function retainRecent<Key, Value>(cache: Map<Key, Value>, key: Key, value: Value
   if (!oldest.done) cache.delete(oldest.value);
 }
 
-function prepareParagraph(shaper: RuntimeShaper, input: ParagraphInput): PreparedParagraph {
+function prepareParagraph(
+  shaper: RuntimeShaper,
+  input: ParagraphInput,
+  previous?: PreparedParagraph,
+): PreparedParagraph {
   const ownedInput = copyInput(input);
-  const unicode = analyzeUnicodeText(ownedInput.text);
+  // Grapheme boundaries, line break opportunities, script items, and bidi levels are decided by the text and its base
+  // direction and by nothing else, so a resize, a colour change, or a letter-spacing change all recompute a result
+  // identical to the retained one. Both are owned, immutable products, so reusing them is a pointer copy.
+  const sameText =
+    previous !== undefined &&
+    previous.input.text === ownedInput.text &&
+    (previous.input.style?.direction ?? 'auto') === (ownedInput.style?.direction ?? 'auto');
+  const unicode = sameText ? previous.unicode : analyzeUnicodeText(ownedInput.text);
   const styles = resolveStyles(shaper, ownedInput, unicode.graphemeBoundaries);
-  const textUtf16 = utf16(ownedInput.text);
-  const bidi = ownBidi(shaper.analyzeBidi(textUtf16, ownedInput.style?.direction ?? 'auto'));
+  const bidi = sameText
+    ? previous.bidi
+    : ownBidi(shaper.analyzeBidi(utf16(ownedInput.text), ownedInput.style?.direction ?? 'auto'));
   const runs = prepareRuns(ownedInput.text, styles, unicode, bidi);
   const shapedRequest = shapeRequest(ownedInput.text, runs);
   const request = shapedRequest.request;
-  const borrowed = request.runs.length === 0 ? emptyShape() : shaper.shapeBatch(request);
-  const shape = ownShape(borrowed);
+  // Shaping is deterministic in its request, and the request carries no font size, line height, or letter spacing —
+  // those scale the shaped advances afterward. An animated resize therefore rebuilds an identical request, so reusing
+  // the retained shape skips the whole shaping pass while every measurement below still recomputes at the new size.
+  // A shape is plain owned typed arrays that nothing releases, so retaining one across preparations is safe.
+  const reused = previous !== undefined && sameShapeRequest(previous.request, request) ? previous.shape : undefined;
+  const shape = reused ?? ownShape(request.runs.length === 0 ? emptyShape() : shaper.shapeBatch(request));
   const ellipses = measureEllipses(shaper, runs, shape, shapedRequest.ellipses);
-  const clusters = measureClusters(shaper, ownedInput.text, unicode, styles, runs, shape);
-  const clusterIndexes = indexClusters(ownedInput.text, clusters);
+  const clusters = measureClusters(shaper, ownedInput.text, unicode, styles, runs, shape, previous);
+  const clusterIndexes = indexClusters(ownedInput.text, styles, clusters, previous);
   return {
     input: ownedInput,
     unicode,
@@ -477,56 +543,46 @@ function copyStyle(style: ParagraphStyle, name: string): ParagraphStyle {
   };
 }
 
+/**
+ * Shaping resolution consumes the one span cascade before run segmentation, so
+ * a span's font, size, language, direction, or features re-segment shaping and
+ * change advances rather than only scaling already-shaped glyphs.
+ */
 function resolveStyles(
   shaper: RuntimeShaper,
   input: ParagraphInput,
   graphemeBoundaries: Uint32Array,
 ): readonly StyleSegment[] {
-  const boundaries = new Set<number>([0, input.text.length]);
   const legalBoundaries = new Set(graphemeBoundaries);
-  const spansByStart = new Map<number, ResolvedSpanStyle[]>();
-  for (const [index, span] of (input.spans ?? []).entries()) {
+  const entries: SpanCascadeEntry<StatedSpanStyle>[] = [];
+  for (const span of input.spans ?? []) {
     assertTextRange(span.start, span.end, input.text.length, 'paragraph span');
     if (!legalBoundaries.has(span.start) || !legalBoundaries.has(span.end)) {
       throw new RangeError('paragraph span boundaries must be extended-grapheme boundaries');
     }
-    boundaries.add(span.start);
-    boundaries.add(span.end);
-    const resolved = resolveSpanStyle(shaper, span, index);
-    const starting = spansByStart.get(span.start);
-    if (starting === undefined) spansByStart.set(span.start, [resolved]);
-    else starting.push(resolved);
+    entries.push({ start: span.start, end: span.end, properties: resolveSpanStyle(shaper, span) });
   }
-  const sorted = [...boundaries].sort((left, right) => left - right);
   const root = resolveStyle(shaper, input.font, input.style ?? {}, 0, input.text.length);
   if (input.text.length === 0) return [{ start: 0, end: 0, style: root }];
-  const sweep = new StyleSweep(root);
   const segments: StyleSegment[] = [];
-  for (let index = 0; index + 1 < sorted.length; index += 1) {
-    const start = sorted[index];
-    const end = sorted[index + 1];
-    if (start === undefined || end === undefined || start === end) continue;
-    for (const span of spansByStart.get(start) ?? []) sweep.add(span);
-    const style = sweep.styleAt(start);
+  for (const segment of resolveSpanCascade(entries, input.text.length, 'paragraph span')) {
+    const style = styleOver(root, segment.properties);
     const previous = segments.at(-1);
-    if (previous !== undefined && previous.end === start && equalStyles(previous.style, style)) {
-      segments[segments.length - 1] = { ...previous, end };
+    if (previous !== undefined && previous.end === segment.start && equalStyles(previous.style, style)) {
+      segments[segments.length - 1] = { ...previous, end: segment.end };
     } else {
-      segments.push({ start, end, style });
+      segments.push({ start: segment.start, end: segment.end, style });
     }
   }
   return segments;
 }
 
-function resolveSpanStyle(shaper: RuntimeShaper, span: ParagraphSpan, index: number): ResolvedSpanStyle {
+function resolveSpanStyle(shaper: RuntimeShaper, span: ParagraphSpan): StatedSpanStyle {
   if (span.font !== undefined) shaper.registerFont(requireFont(shaper, span.font));
   const lineHeight = span.lineHeight === undefined ? undefined : finitePositive(span.lineHeight, 'lineHeight');
   const direction = span.direction;
   const language = span.language === undefined ? undefined : normalizeLanguage(span.language);
   return {
-    index,
-    start: span.start,
-    end: span.end,
     ...(span.font === undefined ? {} : { font: span.font }),
     ...(span.fontSize === undefined ? {} : { fontSize: finitePositive(span.fontSize, 'fontSize') }),
     ...(lineHeight === undefined ? {} : { lineHeight }),
@@ -537,96 +593,21 @@ function resolveSpanStyle(shaper: RuntimeShaper, span: ParagraphSpan, index: num
   };
 }
 
-/**
- * At each boundary, the last input span that is still active wins each style
- * property. Per-property max-heaps preserve that cascade without re-scanning
- * all spans for every segment; expired entries are discarded when observed.
- */
-class StyleSweep {
-  readonly #root: ResolvedStyle;
-  readonly #font = new LatestActiveValue<FontHandle>();
-  readonly #fontSize = new LatestActiveValue<number>();
-  readonly #lineHeight = new LatestActiveValue<number>();
-  readonly #letterSpacing = new LatestActiveValue<number>();
-  readonly #language = new LatestActiveValue<string>();
-  readonly #direction = new LatestActiveValue<'auto' | 'ltr' | 'rtl'>();
-  readonly #features = new LatestActiveValue<readonly ResolvedFontFeature[]>();
-
-  constructor(root: ResolvedStyle) {
-    this.#root = root;
-  }
-
-  add(span: ResolvedSpanStyle): void {
-    const entry = <Value>(value: Value): ActiveStyleValue<Value> => ({
-      index: span.index,
-      end: span.end,
-      value,
-    });
-    if (span.font !== undefined) this.#font.add(entry(span.font));
-    if (span.fontSize !== undefined) this.#fontSize.add(entry(span.fontSize));
-    if (span.lineHeight !== undefined) this.#lineHeight.add(entry(span.lineHeight));
-    if (span.letterSpacing !== undefined) this.#letterSpacing.add(entry(span.letterSpacing));
-    if (span.language !== undefined) this.#language.add(entry(span.language));
-    if (span.direction !== undefined) this.#direction.add(entry(span.direction));
-    if (span.features !== undefined) this.#features.add(entry(span.features));
-  }
-
-  styleAt(offset: number): ResolvedStyle {
-    const font = this.#font.valueAt(offset) ?? this.#root.font;
-    const fontSize = this.#fontSize.valueAt(offset) ?? this.#root.fontSize;
-    const lineHeight = this.#lineHeight.valueAt(offset) ?? this.#root.lineHeight;
-    const letterSpacing = this.#letterSpacing.valueAt(offset) ?? this.#root.letterSpacing;
-    const language = this.#language.valueAt(offset) ?? this.#root.language;
-    const override = this.#direction.valueAt(offset);
-    const direction = override ?? this.#root.direction;
-    const features = this.#features.valueAt(offset) ?? this.#root.features;
-    return {
-      font,
-      fontSize,
-      ...(lineHeight === undefined ? {} : { lineHeight }),
-      letterSpacing,
-      ...(language === undefined ? {} : { language }),
-      direction,
-      ...(override === undefined || direction === 'auto' ? {} : { bidiOverride: direction }),
-      features,
-    };
-  }
-}
-
-class LatestActiveValue<Value> {
-  readonly #heap: ActiveStyleValue<Value>[] = [];
-
-  add(value: ActiveStyleValue<Value>): void {
-    this.#heap.push(value);
-    let child = this.#heap.length - 1;
-    while (child > 0) {
-      const parent = (child - 1) >>> 1;
-      if ((this.#heap[parent]?.index ?? -1) >= value.index) break;
-      this.#heap[child] = this.#heap[parent] as ActiveStyleValue<Value>;
-      child = parent;
-    }
-    this.#heap[child] = value;
-  }
-
-  valueAt(offset: number): Value | undefined {
-    while (this.#heap[0]?.end !== undefined && this.#heap[0].end <= offset) this.#removeTop();
-    return this.#heap[0]?.value;
-  }
-
-  #removeTop(): void {
-    const last = this.#heap.pop();
-    if (last === undefined || this.#heap.length === 0) return;
-    let parent = 0;
-    while (true) {
-      const left = parent * 2 + 1;
-      const right = left + 1;
-      const child = (this.#heap[right]?.index ?? -1) > (this.#heap[left]?.index ?? -1) ? right : left;
-      if ((this.#heap[child]?.index ?? -1) <= last.index) break;
-      this.#heap[parent] = this.#heap[child] as ActiveStyleValue<Value>;
-      parent = child;
-    }
-    this.#heap[parent] = last;
-  }
+/** The paragraph is the outermost scope, so an unstated property inherits from it. */
+function styleOver(root: ResolvedStyle, stated: StatedSpanStyle): ResolvedStyle {
+  const lineHeight = stated.lineHeight ?? root.lineHeight;
+  const language = stated.language ?? root.language;
+  const direction = stated.direction ?? root.direction;
+  return {
+    font: stated.font ?? root.font,
+    fontSize: stated.fontSize ?? root.fontSize,
+    ...(lineHeight === undefined ? {} : { lineHeight }),
+    letterSpacing: stated.letterSpacing ?? root.letterSpacing,
+    ...(language === undefined ? {} : { language }),
+    direction,
+    ...(stated.direction === undefined || direction === 'auto' ? {} : { bidiOverride: direction }),
+    features: stated.features ?? root.features,
+  };
 }
 
 function resolveStyle(
@@ -659,16 +640,20 @@ function resolveFeatures(
   containingStart: number,
   containingEnd: number,
 ): readonly ResolvedFontFeature[] {
-  return features.map((feature) => {
+  return features.flatMap((feature) => {
     const start = feature.start ?? containingStart;
     const end = feature.end ?? containingEnd;
+    // A feature that states no range covers whatever it is applied to, so an empty containing range makes it
+    // vacuous rather than invalid. Rejecting it would fail an ordinary feature-styled field before its first
+    // character is typed. An explicitly empty range is still a caller error.
+    if (feature.start === undefined && feature.end === undefined && start === end) return [];
     assertTextRange(start, end, containingEnd, `feature ${feature.tag}`);
     if (start < containingStart) throw new RangeError(`feature ${feature.tag} starts before its style range`);
     const value = feature.value ?? 1;
     if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff) {
       throw new RangeError(`feature ${feature.tag} value must be a uint32`);
     }
-    return { tag: feature.tag, value, start, end };
+    return [{ tag: feature.tag, value, start, end }];
   });
 }
 
@@ -846,10 +831,14 @@ function measureClusters(
   styles: readonly StyleSegment[],
   runs: readonly PreparedRun[],
   shape: OwnedShape,
-): readonly MeasuredCluster[] {
-  const advances = new Map<number, number>();
-  const unsafe = new Set<number>();
-  const shapedBoundaries = new Set<number>();
+  previous?: PreparedParagraph,
+): MeasuredClusters {
+  // Shaping results are gathered by text offset rather than into a map and two sets keyed by offset. Every glyph of the
+  // paragraph touched all three, so the hash entries were themselves a per-glyph allocation. Advances still accumulate
+  // in the shaped order and in double precision, so the totals are unchanged.
+  const offsets = text.length + 1;
+  const offsetAdvances = new Float64Array(offsets);
+  const offsetFlags = new Uint8Array(offsets);
   for (let runIndex = 0; runIndex < runs.length; runIndex += 1) {
     const run = runs[runIndex];
     const glyphStart = shape.runGlyphStarts[runIndex];
@@ -859,8 +848,8 @@ function measureClusters(
     }
     const font = requireFont(shaper, run.style.font);
     const scale = run.style.fontSize / font.metrics.unitsPerEm;
-    shapedBoundaries.add(run.start);
-    shapedBoundaries.add(run.end);
+    offsetFlags[run.start] = (offsetFlags[run.start] ?? 0) | OFFSET_SHAPED_BOUNDARY;
+    offsetFlags[run.end] = (offsetFlags[run.end] ?? 0) | OFFSET_SHAPED_BOUNDARY;
     for (let glyph = glyphStart; glyph < glyphStart + glyphCount; glyph += 1) {
       const cluster = shape.clusters[glyph];
       const advance = shape.xAdvances[glyph];
@@ -868,56 +857,117 @@ function measureClusters(
       if (cluster === undefined || advance === undefined || flags === undefined) {
         throw new Error('shaper returned an incomplete glyph table');
       }
-      shapedBoundaries.add(cluster);
-      advances.set(cluster, (advances.get(cluster) ?? 0) + Math.abs(advance) * scale);
-      if ((flags & GLYPH_UNSAFE_TO_BREAK) !== 0) unsafe.add(cluster);
+      offsetAdvances[cluster] = (offsetAdvances[cluster] ?? 0) + Math.abs(advance) * scale;
+      offsetFlags[cluster] =
+        (offsetFlags[cluster] ?? 0) |
+        OFFSET_SHAPED_BOUNDARY |
+        ((flags & GLYPH_UNSAFE_TO_BREAK) !== 0 ? OFFSET_UNSAFE_TO_BREAK : 0);
     }
   }
+  const requiredBreaks = new Uint8Array(offsets);
+  for (const entry of unicode.lineBreaks) requiredBreaks[entry.position] = entry.required ? 1 : 0;
 
-  const lineBreaks = new Map(unicode.lineBreaks.map((entry) => [entry.position, entry.required]));
-  const clusters: MeasuredCluster[] = [];
+  const count = Math.max(0, unicode.graphemeBoundaries.length - 1);
+  const retained = previous?.clusters;
+  const starts = reuseTypedArray(retained?.starts, count, (capacity) => new Uint32Array(capacity).subarray(0, count));
+  const ends = reuseTypedArray(retained?.ends, count, (capacity) => new Uint32Array(capacity).subarray(0, count));
+  const clusterAdvances = reuseTypedArray(retained?.advances, count, (capacity) =>
+    new Float64Array(capacity).subarray(0, count),
+  );
+  const flags = reuseTypedArray(retained?.flags, count, (capacity) => new Uint8Array(capacity).subarray(0, count));
+  const styleIndexes = reuseTypedArray(retained?.styleIndexes, count, (capacity) =>
+    new Uint32Array(capacity).subarray(0, count),
+  );
   let styleIndex = 0;
-  for (let index = 0; index + 1 < unicode.graphemeBoundaries.length; index += 1) {
-    const start = unicode.graphemeBoundaries[index];
-    const end = unicode.graphemeBoundaries[index + 1];
-    if (start === undefined || end === undefined) continue;
+  for (let index = 0; index < count; index += 1) {
+    const start = unicode.graphemeBoundaries[index] ?? 0;
+    const end = unicode.graphemeBoundaries[index + 1] ?? 0;
     while ((styles[styleIndex]?.end ?? Number.POSITIVE_INFINITY) <= start) styleIndex += 1;
     const styleSegment = styles[styleIndex];
     if (styleSegment === undefined || styleSegment.start > start) {
       throw new Error(`paragraph offset ${start} has no resolved style`);
     }
-    const style = styleSegment.style;
-    const requiredBreak = lineBreaks.get(end) === true;
     const hardBreak = isHardBreak(text, start);
-    clusters.push({
-      start,
-      end,
-      advance: (advances.get(start) ?? 0) + (hardBreak ? 0 : style.letterSpacing),
-      safeBefore: shapedBoundaries.has(start) && !unsafe.has(start),
-      style,
-      requiredBreak,
-      hardBreak,
-    });
+    const boundary = offsetFlags[start] ?? 0;
+    starts[index] = start;
+    ends[index] = end;
+    clusterAdvances[index] = (offsetAdvances[start] ?? 0) + (hardBreak ? 0 : styleSegment.style.letterSpacing);
+    styleIndexes[index] = styleIndex;
+    flags[index] =
+      ((boundary & (OFFSET_SHAPED_BOUNDARY | OFFSET_UNSAFE_TO_BREAK)) === OFFSET_SHAPED_BOUNDARY
+        ? CLUSTER_SAFE_BEFORE
+        : 0) |
+      (requiredBreaks[end] === 1 ? CLUSTER_REQUIRED_BREAK : 0) |
+      (hardBreak ? CLUSTER_HARD_BREAK : 0);
   }
-  return clusters;
+  return { count, starts, ends, advances: clusterAdvances, flags, styleIndexes };
+}
+
+/** The style a cluster resolved to during measurement. */
+function clusterStyle(prepared: PreparedParagraph, index: number): ResolvedStyle {
+  const style = prepared.styles[prepared.clusters.styleIndexes[index] ?? 0]?.style;
+  if (style === undefined) throw new Error(`cluster ${index} has no resolved style`);
+  return style;
+}
+
+/** Smallest retained index capacity. Ordinary paragraphs never pay a growth step on their first frames. */
+const MINIMUM_CLUSTER_INDEX_CAPACITY = 512;
+
+/**
+ * Reuses a retained buffer's memory when it already holds `length` elements, and otherwise grows to a high watermark
+ * that later preparations reuse. The returned view carries the live length, so binary searches over it stay correct
+ * while the backing allocation outlives any single preparation.
+ */
+function reuseTypedArray<Array extends Uint8Array | Uint32Array | Float64Array>(
+  previous: Array | undefined,
+  length: number,
+  construct: (capacity: number) => Array,
+): Array {
+  const capacity = previous === undefined ? 0 : previous.buffer.byteLength / previous.BYTES_PER_ELEMENT;
+  if (previous !== undefined && capacity >= length) {
+    const view = new (previous.constructor as new (buffer: ArrayBufferLike, offset: number, length: number) => Array)(
+      previous.buffer,
+      0,
+      length,
+    );
+    view.fill(0);
+    return view;
+  }
+  return construct(Math.max(length, MINIMUM_CLUSTER_INDEX_CAPACITY, capacity * 2));
 }
 
 function indexClusters(
   text: string,
-  clusters: readonly MeasuredCluster[],
-): Pick<PreparedParagraph, 'clusterStarts' | 'letterSpacingPrefix' | 'spacePrefix'> {
-  const clusterStarts = new Uint32Array(clusters.length);
-  const letterSpacingPrefix = new Float64Array(clusters.length + 1);
-  const spacePrefix = new Uint32Array(clusters.length + 1);
-  for (let index = 0; index < clusters.length; index += 1) {
-    const cluster = clusters[index];
-    if (cluster === undefined) continue;
-    clusterStarts[index] = cluster.start;
-    letterSpacingPrefix[index + 1] =
-      (letterSpacingPrefix[index] ?? 0) + (cluster.hardBreak ? 0 : cluster.style.letterSpacing);
-    spacePrefix[index + 1] = (spacePrefix[index] ?? 0) + (text.charCodeAt(cluster.start) === 0x20 ? 1 : 0);
+  styles: readonly StyleSegment[],
+  clusters: MeasuredClusters,
+  previous?: PreparedParagraph,
+): Pick<PreparedParagraph, 'clusterIndexAt' | 'letterSpacingPrefix' | 'spacePrefix'> {
+  const { count, starts, flags, styleIndexes } = clusters;
+  const letterSpacingPrefix = reuseTypedArray(previous?.letterSpacingPrefix, count + 1, (capacity) =>
+    new Float64Array(capacity).subarray(0, count + 1),
+  );
+  const spacePrefix = reuseTypedArray(previous?.spacePrefix, count + 1, (capacity) =>
+    new Uint32Array(capacity).subarray(0, count + 1),
+  );
+  const clusterIndexAt = reuseTypedArray(previous?.clusterIndexAt, text.length + 1, (capacity) =>
+    new Uint32Array(capacity).subarray(0, text.length + 1),
+  );
+  for (let index = 0; index < count; index += 1) {
+    const start = starts[index] ?? 0;
+    const letterSpacing =
+      ((flags[index] ?? 0) & CLUSTER_HARD_BREAK) !== 0
+        ? 0
+        : (styles[styleIndexes[index] ?? 0]?.style.letterSpacing ?? 0);
+    letterSpacingPrefix[index + 1] = (letterSpacingPrefix[index] ?? 0) + letterSpacing;
+    spacePrefix[index + 1] = (spacePrefix[index] ?? 0) + (text.charCodeAt(start) === 0x20 ? 1 : 0);
   }
-  return { clusterStarts, letterSpacingPrefix, spacePrefix };
+  // The same answer a lower-bound search over the cluster starts gives, resolved once for every offset in one pass.
+  let cluster = 0;
+  for (let offset = 0; offset <= text.length; offset += 1) {
+    while (cluster < count && (starts[cluster] ?? 0) < offset) cluster += 1;
+    clusterIndexAt[offset] = cluster;
+  }
+  return { clusterIndexAt, letterSpacingPrefix, spacePrefix };
 }
 
 function planLines(
@@ -926,19 +976,18 @@ function planLines(
   constraints: NormalizedConstraints,
 ): readonly LinePlan[] {
   const widthLimit = constraints.width.mode === 'unconstrained' ? Number.POSITIVE_INFINITY : constraints.width.size;
+  const { count, starts, ends, flags } = prepared.clusters;
   const allowed = new Set<number>();
   if (constraints.wrap === 'character') {
-    for (let index = 0; index < prepared.clusters.length; index += 1) {
-      const cluster = prepared.clusters[index];
-      const next = prepared.clusters[index + 1];
-      if (cluster !== undefined && (next?.safeBefore === true || next === undefined)) {
-        allowed.add(cluster.end);
-      }
+    for (let index = 0; index < count; index += 1) {
+      const nextIsSafe = index + 1 === count || ((flags[index + 1] ?? 0) & CLUSTER_SAFE_BEFORE) !== 0;
+      if (nextIsSafe) allowed.add(ends[index] ?? 0);
     }
   } else if (constraints.wrap === 'word') {
-    const shapingBoundaries = new Set(
-      prepared.clusters.filter(({ safeBefore }) => safeBefore).map(({ start }) => start),
-    );
+    const shapingBoundaries = new Set<number>();
+    for (let index = 0; index < count; index += 1) {
+      if (((flags[index] ?? 0) & CLUSTER_SAFE_BEFORE) !== 0) shapingBoundaries.add(starts[index] ?? 0);
+    }
     shapingBoundaries.add(prepared.input.text.length);
     for (const entry of prepared.unicode.lineBreaks) {
       if (shapingBoundaries.has(entry.position)) allowed.add(entry.position);
@@ -1026,20 +1075,20 @@ function visibleLines(
 }
 
 function ellipsizeLine(prepared: PreparedParagraph, line: LinePlan, widthLimit: number): LinePlan {
+  const { count, starts, advances, flags } = prepared.clusters;
+  const startAt = (index: number): number => (index < count ? (starts[index] ?? 0) : line.textStart);
   let clusterEnd = line.clusterEnd;
   let advance = line.advance;
-  while (clusterEnd > line.clusterStart && prepared.clusters[clusterEnd - 1]?.hardBreak === true) {
+  while (clusterEnd > line.clusterStart && ((flags[clusterEnd - 1] ?? 0) & CLUSTER_HARD_BREAK) !== 0) {
     clusterEnd -= 1;
   }
   let selected = ellipsisAt(prepared, line.textEnd);
   while (clusterEnd > line.clusterStart && Number.isFinite(widthLimit) && advance + selected.advance > widthLimit) {
     clusterEnd -= 1;
-    const removed = prepared.clusters[clusterEnd];
-    if (removed !== undefined) advance -= removed.advance;
-    const offset = prepared.clusters[clusterEnd]?.start ?? line.textStart;
-    selected = ellipsisAt(prepared, offset);
+    if (clusterEnd < count) advance -= advances[clusterEnd] ?? 0;
+    selected = ellipsisAt(prepared, startAt(clusterEnd));
   }
-  const textEnd = prepared.clusters[clusterEnd]?.start ?? line.textStart;
+  const textEnd = startAt(clusterEnd);
   const levelOffset = Math.max(line.textStart, textEnd - 1);
   const level = prepared.bidi.levels[levelOffset] ?? paragraphLevelAt(prepared.bidi, textEnd);
   return {
@@ -1072,26 +1121,26 @@ function breakLines(
   widthLimit: number,
   wrap: 'none' | 'word' | 'character',
 ): readonly LinePlan[] {
-  const { clusters } = prepared;
-  if (clusters.length === 0) return [];
+  const { count, starts, ends, advances: clusterAdvances, flags } = prepared.clusters;
+  if (count === 0) return [];
   const lines: LinePlan[] = [];
   let lineStart = 0;
-  while (lineStart < clusters.length) {
+  while (lineStart < count) {
     let advance = 0;
     let lastAllowed = -1;
     let lastAllowedAdvance = 0;
     let lastSafe = -1;
     let lastSafeAdvance = 0;
-    let lineEnd = clusters.length;
+    let lineEnd = count;
     let lineAdvance = 0;
-    for (let index = lineStart; index < clusters.length; index += 1) {
-      const cluster = clusters[index];
-      if (cluster === undefined) break;
-      if (index > lineStart && cluster.safeBefore) {
+    for (let index = lineStart; index < count; index += 1) {
+      const clusterFlags = flags[index] ?? 0;
+      if (index > lineStart && (clusterFlags & CLUSTER_SAFE_BEFORE) !== 0) {
         lastSafe = index;
         lastSafeAdvance = advance;
       }
-      const nextAdvance = advance + cluster.advance;
+      const requiredBreak = (clusterFlags & CLUSTER_REQUIRED_BREAK) !== 0;
+      const nextAdvance = advance + (clusterAdvances[index] ?? 0);
       if (wrap !== 'none' && Number.isFinite(widthLimit) && nextAdvance > widthLimit && index > lineStart) {
         if (lastAllowed > lineStart) {
           lineEnd = lastAllowed;
@@ -1101,7 +1150,7 @@ function breakLines(
           lineAdvance = lastSafeAdvance;
         } else {
           advance = nextAdvance;
-          if (cluster.requiredBreak || index === clusters.length - 1) {
+          if (requiredBreak || index === count - 1) {
             lineEnd = index + 1;
             lineAdvance = advance;
             break;
@@ -1111,41 +1160,39 @@ function breakLines(
         break;
       }
       advance = nextAdvance;
-      if (cluster.requiredBreak) {
+      if (requiredBreak) {
         lineEnd = index + 1;
         lineAdvance = advance;
         break;
       }
-      if (allowed.has(cluster.end)) {
+      if (allowed.has(ends[index] ?? 0)) {
         lastAllowed = index + 1;
         lastAllowedAdvance = advance;
       }
-      if (index === clusters.length - 1) lineAdvance = advance;
+      if (index === count - 1) lineAdvance = advance;
     }
     if (lineEnd <= lineStart) {
       lineEnd = lineStart + 1;
-      lineAdvance = clusters[lineStart]?.advance ?? 0;
+      lineAdvance = clusterAdvances[lineStart] ?? 0;
     }
-    const first = clusters[lineStart];
-    const last = clusters[lineEnd - 1];
-    if (first === undefined || last === undefined) throw new Error('invalid line cluster range');
-    const metrics = metricsForLine(shaper, clusters.slice(lineStart, lineEnd), prepared.styles[0]?.style);
+    const lastHardBreak = ((flags[lineEnd - 1] ?? 0) & CLUSTER_HARD_BREAK) !== 0;
+    const metrics = metricsForLine(shaper, prepared, lineStart, lineEnd, prepared.styles[0]?.style);
     lines.push({
       clusterStart: lineStart,
       clusterEnd: lineEnd,
-      textStart: first.start,
-      textEnd: last.hardBreak ? last.start : last.end,
+      textStart: starts[lineStart] ?? 0,
+      textEnd: (lastHardBreak ? starts[lineEnd - 1] : ends[lineEnd - 1]) ?? 0,
       advance: lineAdvance,
-      hardBreak: last.hardBreak,
+      hardBreak: lastHardBreak,
       ...metrics,
     });
     lineStart = lineEnd;
   }
-  if (clusters.at(-1)?.hardBreak === true) {
-    const metrics = metricsForLine(shaper, [], prepared.styles[0]?.style);
+  if (((flags[count - 1] ?? 0) & CLUSTER_HARD_BREAK) !== 0) {
+    const metrics = metricsForLine(shaper, prepared, count, count, prepared.styles[0]?.style);
     lines.push({
-      clusterStart: clusters.length,
-      clusterEnd: clusters.length,
+      clusterStart: count,
+      clusterEnd: count,
       textStart: prepared.input.text.length,
       textEnd: prepared.input.text.length,
       advance: 0,
@@ -1156,27 +1203,53 @@ function breakLines(
   return lines;
 }
 
+/**
+ * Line box metrics over the drawable clusters of `[lineStart, lineEnd)`. Both extents are maxima over the contributing
+ * styles, so the clusters are visited in place: the order is irrelevant and a repeated style contributes nothing new,
+ * which lets the common single-style line resolve its font and scale once.
+ */
 function metricsForLine(
   shaper: RuntimeShaper,
-  clusters: readonly MeasuredCluster[],
+  prepared: PreparedParagraph,
+  lineStart: number,
+  lineEnd: number,
   fallback?: ResolvedStyle,
 ): LineMetrics {
-  const styles = clusters.filter(({ hardBreak }) => !hardBreak).map(({ style }) => style);
-  if (styles.length === 0 && fallback !== undefined) styles.push(fallback);
+  const { flags, styleIndexes } = prepared.clusters;
   let above = 0;
   let below = 0;
-  for (const style of styles) {
-    const font = requireFont(shaper, style.font);
-    const scale = style.fontSize / font.metrics.unitsPerEm;
-    const ascent = font.metrics.ascender * scale;
-    const descent = -font.metrics.descender * scale;
-    const natural = (font.metrics.ascender - font.metrics.descender + font.metrics.lineGap) * scale;
-    const height = style.lineHeight === undefined ? natural : style.fontSize * style.lineHeight;
-    const leading = Math.max(0, height - ascent - descent);
-    above = Math.max(above, ascent + leading / 2);
-    below = Math.max(below, descent + leading / 2);
+  let contributed = false;
+  let lastStyleIndex = -1;
+  for (let index = lineStart; index < lineEnd; index += 1) {
+    if (((flags[index] ?? 0) & CLUSTER_HARD_BREAK) !== 0) continue;
+    const styleIndex = styleIndexes[index] ?? 0;
+    if (contributed && styleIndex === lastStyleIndex) continue;
+    lastStyleIndex = styleIndex;
+    contributed = true;
+    const extents = styleLineExtents(shaper, clusterStyle(prepared, index));
+    above = Math.max(above, extents.above);
+    below = Math.max(below, extents.below);
+  }
+  if (!contributed && fallback !== undefined) {
+    const extents = styleLineExtents(shaper, fallback);
+    above = Math.max(above, extents.above);
+    below = Math.max(below, extents.below);
   }
   return { height: above + below, baseline: above };
+}
+
+function styleLineExtents(
+  shaper: RuntimeShaper,
+  style: ResolvedStyle,
+): { readonly above: number; readonly below: number } {
+  const font = requireFont(shaper, style.font);
+  const scale = style.fontSize / font.metrics.unitsPerEm;
+  const ascent = font.metrics.ascender * scale;
+  const descent = -font.metrics.descender * scale;
+  const natural = (font.metrics.ascender - font.metrics.descender + font.metrics.lineGap) * scale;
+  const height = style.lineHeight === undefined ? natural : style.fontSize * style.lineHeight;
+  const leading = Math.max(0, height - ascent - descent);
+  return { above: ascent + leading / 2, below: descent + leading / 2 };
 }
 
 function normalizeConstraints(constraints: ParagraphConstraints = {}): NormalizedConstraints {
@@ -1280,25 +1353,51 @@ function positionPrepared(
 
   const fontHandles: number[] = [];
   const fontSlots = new Map<FontHandle, number>();
-  const glyphFontSlots: number[] = [];
-  const glyphIds: number[] = [];
-  const clusters: number[] = [];
-  const glyphFontSizes: number[] = [];
-  const x: number[] = [];
-  const y: number[] = [];
-  const glyphFlags: number[] = [];
-  const lineTextStarts: number[] = [];
-  const lineTextEnds: number[] = [];
-  const lineGlyphStarts: number[] = [];
-  const lineGlyphCounts: number[] = [];
-  const lineBaselines: number[] = [];
-  const lineAdvances: number[] = [];
+  // Every output glyph comes from one source glyph, so the shaped runs bound the output. The arrays are written in
+  // place and sliced to the final count, which removes both the per-glyph push and the copy that `TypedArray.from`
+  // made out of every accumulator.
+  let capacity = prepared.shape.glyphIds.length + (reshaped?.glyphIds.length ?? 0);
+  let glyphFontSlots = new Uint16Array(capacity);
+  let glyphIds = new Uint16Array(capacity);
+  let clusters = new Uint32Array(capacity);
+  let glyphFontSizes = new Float32Array(capacity);
+  // Both axes accumulate in double precision and narrow once, when the geometry is handed out. Alignment and
+  // justification already read `x` back and add to it, and single precision would round at the store and again at the
+  // adjustment and drift from the golden layout. The same becomes true of `y` the moment vertical alignment or a
+  // vertical writing mode lands, so the rule is the axis, not today's caller.
+  let x = new Float64Array(capacity);
+  let y = new Float64Array(capacity);
+  let glyphFlags = new Uint16Array(capacity);
+  const justifying = constraints.align === 'justify';
+  let justificationCounts = justifying ? new Uint32Array(capacity) : undefined;
+  const lineTextStarts = new Uint32Array(lines.length);
+  const lineTextEnds = new Uint32Array(lines.length);
+  const lineGlyphStarts = new Uint32Array(lines.length);
+  const lineGlyphCounts = new Uint32Array(lines.length);
+  const lineBaselines = new Float32Array(lines.length);
+  const lineAdvances = new Float32Array(lines.length);
+  let count = 0;
   let blockOffset = 0;
   let fragmentIndex = 0;
 
-  for (const [lineIndex, line] of lines.entries()) {
-    const lineGlyphStart = glyphIds.length;
-    const justificationCounts: number[] = [];
+  const reserve = (needed: number): void => {
+    if (needed <= capacity) return;
+    let next = Math.max(capacity * 2, 64);
+    while (next < needed) next *= 2;
+    capacity = next;
+    glyphFontSlots = grownTypedArray(glyphFontSlots, next);
+    glyphIds = grownTypedArray(glyphIds, next);
+    clusters = grownTypedArray(clusters, next);
+    glyphFontSizes = grownTypedArray(glyphFontSizes, next);
+    x = grownTypedArray(x, next);
+    y = grownTypedArray(y, next);
+    glyphFlags = grownTypedArray(glyphFlags, next);
+    if (justificationCounts !== undefined) justificationCounts = grownTypedArray(justificationCounts, next);
+  };
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex]!;
+    const lineGlyphStart = count;
     let passedSpaces = 0;
     let cursor = 0;
     const baseline = blockOffset + line.baseline;
@@ -1326,9 +1425,10 @@ function positionPrepared(
       const scale = run.style.fontSize / font.metrics.unitsPerEm;
       const selectedStart = fragment.ellipsis?.textStart ?? fragment.start;
       const selectedEnd = fragment.ellipsis?.textEnd ?? fragment.end;
-      const selected = glyphIndexes(source, glyphStart, glyphCount, selectedStart, selectedEnd);
+      const selected = glyphRange(source, glyphStart, glyphCount, selectedStart, selectedEnd);
+      reserve(count + (selected.end - selected.start));
       let clusterBoundary = run.direction === 'ltr' ? fragment.start : fragment.end;
-      for (const [selectedIndex, glyph] of selected.entries()) {
+      for (let glyph = selected.start; glyph < selected.end; glyph += 1) {
         const cluster = source.clusters[glyph];
         const glyphId = source.glyphIds[glyph];
         const xAdvance = source.xAdvances[glyph];
@@ -1345,17 +1445,17 @@ function positionPrepared(
         ) {
           throw new Error('shaper returned an incomplete positioned glyph');
         }
-        glyphFontSlots.push(slot);
-        glyphIds.push(glyphId);
-        clusters.push(fragment.ellipsis?.cluster ?? cluster);
-        glyphFontSizes.push(run.style.fontSize);
-        justificationCounts.push(passedSpaces);
-        x.push(cursor + xOffset * scale);
-        y.push(baseline - yOffset * scale);
-        glyphFlags.push(flags);
+        glyphFontSlots[count] = slot;
+        glyphIds[count] = glyphId;
+        clusters[count] = fragment.ellipsis?.cluster ?? cluster;
+        glyphFontSizes[count] = run.style.fontSize;
+        if (justificationCounts !== undefined) justificationCounts[count] = passedSpaces;
+        x[count] = cursor + xOffset * scale;
+        y[count] = baseline - yOffset * scale;
+        glyphFlags[count] = flags;
+        count += 1;
         cursor += Math.abs(xAdvance) * scale;
-        const nextGlyph = selected[selectedIndex + 1];
-        const nextCluster = nextGlyph === undefined ? selectedEnd : source.clusters[nextGlyph];
+        const nextCluster = glyph + 1 < selected.end ? source.clusters[glyph + 1] : selectedEnd;
         if (nextCluster !== cluster && fragment.ellipsis === undefined) {
           const rangeStart = run.direction === 'ltr' ? cluster : Math.min(cluster, clusterBoundary);
           const rangeEnd = run.direction === 'ltr' ? (nextCluster ?? fragment.end) : Math.max(cluster, clusterBoundary);
@@ -1367,46 +1467,55 @@ function positionPrepared(
       fragmentIndex += 1;
     }
     const available = Math.max(0, boxWidth - cursor);
-    if (constraints.align === 'justify' && !line.hardBreak && lineIndex < lines.length - 1 && passedSpaces > 0) {
+    if (justifying && !line.hardBreak && lineIndex < lines.length - 1 && passedSpaces > 0) {
       const perSpace = available / passedSpaces;
-      for (let glyph = lineGlyphStart; glyph < glyphIds.length; glyph += 1) {
-        x[glyph] = (x[glyph] ?? 0) + (justificationCounts[glyph - lineGlyphStart] ?? 0) * perSpace;
+      for (let glyph = lineGlyphStart; glyph < count; glyph += 1) {
+        x[glyph] = (x[glyph] ?? 0) + (justificationCounts?.[glyph] ?? 0) * perSpace;
       }
       cursor += available;
     } else {
       const paragraphDirection = directionForLevel(paragraphLevelAt(prepared.bidi, line.textStart));
       const offset = alignmentOffset(constraints.align, paragraphDirection, available);
       if (offset !== 0) {
-        for (let glyph = lineGlyphStart; glyph < glyphIds.length; glyph += 1) {
+        for (let glyph = lineGlyphStart; glyph < count; glyph += 1) {
           x[glyph] = (x[glyph] ?? 0) + offset;
         }
       }
     }
-    lineTextStarts.push(line.textStart);
-    lineTextEnds.push(line.textEnd);
-    lineGlyphStarts.push(lineGlyphStart);
-    lineGlyphCounts.push(glyphIds.length - lineGlyphStart);
-    lineBaselines.push(baseline);
-    lineAdvances.push(cursor);
+    lineTextStarts[lineIndex] = line.textStart;
+    lineTextEnds[lineIndex] = line.textEnd;
+    lineGlyphStarts[lineIndex] = lineGlyphStart;
+    lineGlyphCounts[lineIndex] = count - lineGlyphStart;
+    lineBaselines[lineIndex] = baseline;
+    lineAdvances[lineIndex] = cursor;
     blockOffset += line.height;
   }
 
   return {
     fontHandles: Uint32Array.from(fontHandles),
-    glyphFontSlots: Uint16Array.from(glyphFontSlots),
-    glyphIds: Uint16Array.from(glyphIds),
-    clusters: Uint32Array.from(clusters),
-    glyphFontSizes: Float32Array.from(glyphFontSizes),
-    x: Float32Array.from(x),
-    y: Float32Array.from(y),
-    glyphFlags: Uint16Array.from(glyphFlags),
-    lineTextStarts: Uint32Array.from(lineTextStarts),
-    lineTextEnds: Uint32Array.from(lineTextEnds),
-    lineGlyphStarts: Uint32Array.from(lineGlyphStarts),
-    lineGlyphCounts: Uint32Array.from(lineGlyphCounts),
-    lineBaselines: Float32Array.from(lineBaselines),
-    lineAdvances: Float32Array.from(lineAdvances),
+    glyphFontSlots: glyphFontSlots.subarray(0, count),
+    glyphIds: glyphIds.subarray(0, count),
+    clusters: clusters.subarray(0, count),
+    glyphFontSizes: glyphFontSizes.subarray(0, count),
+    x: new Float32Array(x.subarray(0, count)),
+    y: new Float32Array(y.subarray(0, count)),
+    glyphFlags: glyphFlags.subarray(0, count),
+    lineTextStarts,
+    lineTextEnds,
+    lineGlyphStarts,
+    lineGlyphCounts,
+    lineBaselines,
+    lineAdvances,
   };
+}
+
+function grownTypedArray<T extends Uint16Array | Uint32Array | Float32Array | Float64Array>(
+  array: T,
+  capacity: number,
+): T {
+  const next = new (array.constructor as new (length: number) => T)(capacity);
+  next.set(array as unknown as ArrayLike<number> & ArrayBufferView as never);
+  return next;
 }
 
 function preparePositioning(
@@ -1445,51 +1554,66 @@ function justificationSpaces(prepared: PreparedParagraph, line: LinePlan, start:
   while (trimmedEnd > line.textStart && prepared.input.text.charCodeAt(trimmedEnd - 1) === 0x20) {
     trimmedEnd -= 1;
   }
-  return clusterRangeSum(prepared.clusterStarts, prepared.spacePrefix, start, Math.min(end, trimmedEnd));
+  return clusterRangeSum(prepared, prepared.spacePrefix, start, Math.min(end, trimmedEnd));
 }
 
 function collectLineFragments(prepared: PreparedParagraph, lines: readonly LinePlan[]): readonly LineFragment[] {
-  const fragments: LineFragment[] = [];
+  const fragments: LineFragmentDraft[] = [];
+  // One scratch buffer for the whole paragraph rather than a fresh copy of every line's levels. The reordered levels
+  // of a line are read only while that line's fragments are built, so the lines share it.
+  const levels = new Uint8Array(prepared.input.text.length);
   for (const [lineIndex, line] of lines.entries()) {
-    const levels = reorderedLineLevels(prepared.bidi, line.textStart, line.textEnd);
-    const logical = [];
+    const levelCount = reorderedLineLevels(prepared.bidi, line.textStart, line.textEnd, levels);
+    const logicalStart = fragments.length;
     for (const [runIndex, run] of prepared.runs.entries()) {
       const start = Math.max(line.textStart, run.start);
       const end = Math.min(line.textEnd, run.end);
       if (start >= end) continue;
       let fragmentStart = start;
       while (fragmentStart < end) {
-        const localStart = fragmentStart - line.textStart;
-        const resolvedLevel = levels[localStart] ?? run.bidiLevel;
-        const level =
-          run.style.bidiOverride === undefined ? resolvedLevel : forceLevelDirection(resolvedLevel, run.direction);
+        const level = fragmentLevel(run, levels, levelCount, fragmentStart - line.textStart);
         let fragmentEnd = fragmentStart + 1;
         while (fragmentEnd < end) {
-          const nextResolved = levels[fragmentEnd - line.textStart] ?? run.bidiLevel;
-          const nextLevel =
-            run.style.bidiOverride === undefined ? nextResolved : forceLevelDirection(nextResolved, run.direction);
-          if (nextLevel !== level) break;
+          if (fragmentLevel(run, levels, levelCount, fragmentEnd - line.textStart) !== level) break;
           fragmentEnd += 1;
         }
-        logical.push({ run: runIndex, start: fragmentStart, end: fragmentEnd, level });
+        fragments.push({
+          line: lineIndex,
+          run: runIndex,
+          start: fragmentStart,
+          end: fragmentEnd,
+          level,
+          flags: 0,
+          reshape: false,
+        });
         fragmentStart = fragmentEnd;
       }
     }
-    const decorated: Omit<LineFragment, 'line'>[] = logical.map((fragment, logicalIndex) => {
-      const first = logicalIndex === 0;
-      const last = logicalIndex === logical.length - 1;
+    const logicalEnd = fragments.length;
+    for (let index = logicalStart; index < logicalEnd; index += 1) {
+      const fragment = fragments[index];
+      if (fragment === undefined) continue;
+      const first = index === logicalStart;
+      const last = index === logicalEnd - 1;
       const run = prepared.runs[fragment.run];
       if (run === undefined) throw new Error('line fragment references a missing shaping run');
-      const boundaryLine = (first && line.textStart > run.start) || (last && line.textEnd < run.end);
-      const unsafe = fragmentHasFlag(prepared, fragment.run, fragment.start, fragment.end, GLYPH_UNSAFE_TO_CONCAT);
-      return {
-        ...fragment,
-        flags: PRODUCE_UNSAFE_TO_CONCAT | (first ? BEGINNING_OF_TEXT : 0) | (last ? END_OF_TEXT : 0),
-        reshape: boundaryLine && unsafe,
-      };
-    });
+      fragment.flags = PRODUCE_UNSAFE_TO_CONCAT | (first ? BEGINNING_OF_TEXT : 0) | (last ? END_OF_TEXT : 0);
+      // A reshape can only change the answer when it shapes with LESS context than the paragraph shape already used.
+      // Boundary reshaping requests the whole run as context, which is exactly the context that produced the retained
+      // shape, so the shaper returns the glyphs it already returned. The buffer's beginning- and end-of-text flags do
+      // not rescue it either: they describe the buffer edge, and the surrounding text shipped as context overrides
+      // them. Measured byte-identical over 640 ranges and 20,280 glyphs across Latin word wrap, Arabic word wrap, and
+      // Arabic character wrap narrow enough to break inside joined words, and the whole alignment, clipping,
+      // max-lines, ellipsis, and justification contract lays out identically with it disabled.
+      //
+      // Narrowing the context is a real future need — a truncated line whose last letter should take its final form,
+      // or a line shaped as an isolated unit — and `ReshapeRange` stays for it. Set this where that context is
+      // narrowed, not on every unsafe boundary.
+      fragment.reshape = false;
+    }
     if (line.ellipsis !== undefined) {
-      decorated.push({
+      fragments.push({
+        line: lineIndex,
         run: line.ellipsis.sourceRun,
         start: line.ellipsis.cluster,
         end: line.ellipsis.cluster,
@@ -1499,22 +1623,31 @@ function collectLineFragments(prepared: PreparedParagraph, lines: readonly LineP
         ellipsis: line.ellipsis,
       });
     }
-    for (const fragment of reorderFragments(decorated)) {
-      fragments.push({ line: lineIndex, ...fragment });
-    }
+    reorderFragments(fragments, logicalStart, fragments.length);
   }
   return fragments;
 }
 
-function reorderedLineLevels(bidi: OwnedBidiAnalysis, start: number, end: number): Uint8Array {
-  const levels = bidi.levels.slice(start, end);
-  const classes = bidi.classes.subarray(start, end);
+/** The bidi level a fragment resolves to, honouring a span that overrode the run's direction. */
+function fragmentLevel(run: PreparedRun, levels: Uint8Array, levelCount: number, localOffset: number): number {
+  const resolved = (localOffset < levelCount ? levels[localOffset] : undefined) ?? run.bidiLevel;
+  return run.style.bidiOverride === undefined ? resolved : forceLevelDirection(resolved, run.direction);
+}
+
+/**
+ * Writes the line's levels, with the trailing and separator resets of UAX #9 rule L1 applied, into the first
+ * `end - start` entries of `levels` and returns how many it wrote.
+ */
+function reorderedLineLevels(bidi: OwnedBidiAnalysis, start: number, end: number, levels: Uint8Array): number {
+  const count = Math.max(0, Math.min(end, bidi.levels.length) - start);
+  for (let index = 0; index < count; index += 1) levels[index] = bidi.levels[start + index] ?? 0;
+  const classes = bidi.classes;
   const paragraphLevel = paragraphLevelAt(bidi, start);
   let resetFrom: number | undefined = 0;
   let resetTo: number | undefined;
   let previousLevel = paragraphLevel;
-  for (let index = 0; index < classes.length; index += 1) {
-    const bidiClass = classes[index];
+  for (let index = 0; index < count; index += 1) {
+    const bidiClass = classes[start + index];
     if (bidiClass === BIDI_B || bidiClass === BIDI_S) {
       resetTo = index + 1;
       resetFrom ??= index;
@@ -1546,8 +1679,8 @@ function reorderedLineLevels(bidi: OwnedBidiAnalysis, start: number, end: number
     }
     previousLevel = levels[index] ?? paragraphLevel;
   }
-  if (resetFrom !== undefined) levels.fill(paragraphLevel, resetFrom);
-  return levels;
+  if (resetFrom !== undefined) levels.fill(paragraphLevel, resetFrom, count);
+  return count;
 }
 
 function paragraphLevelAt(bidi: OwnedBidiAnalysis, offset: number): number {
@@ -1561,28 +1694,30 @@ function paragraphLevelAt(bidi: OwnedBidiAnalysis, offset: number): number {
   return bidi.paragraphLevels.at(-1) ?? 0;
 }
 
+/** Reorders `visual[rangeStart, rangeEnd)` from logical into visual order in place, by UAX #9 rule L2. */
 function reorderFragments<Fragment extends { readonly level: number }>(
-  logical: readonly Fragment[],
-): readonly Fragment[] {
-  const visual = [...logical];
+  visual: Fragment[],
+  rangeStart: number,
+  rangeEnd: number,
+): void {
   let maximum = 0;
   let lowestOdd = Number.POSITIVE_INFINITY;
-  for (const fragment of visual) {
-    maximum = Math.max(maximum, fragment.level);
-    if ((fragment.level & 1) === 1) lowestOdd = Math.min(lowestOdd, fragment.level);
+  for (let index = rangeStart; index < rangeEnd; index += 1) {
+    const level = visual[index]?.level ?? 0;
+    maximum = Math.max(maximum, level);
+    if ((level & 1) === 1) lowestOdd = Math.min(lowestOdd, level);
   }
-  if (!Number.isFinite(lowestOdd)) return visual;
+  if (!Number.isFinite(lowestOdd)) return;
   for (let level = maximum; level >= lowestOdd; level -= 1) {
-    let start = 0;
-    while (start < visual.length) {
-      while (start < visual.length && (visual[start]?.level ?? -1) < level) start += 1;
+    let start = rangeStart;
+    while (start < rangeEnd) {
+      while (start < rangeEnd && (visual[start]?.level ?? -1) < level) start += 1;
       let end = start;
-      while (end < visual.length && (visual[end]?.level ?? -1) >= level) end += 1;
+      while (end < rangeEnd && (visual[end]?.level ?? -1) >= level) end += 1;
       reverse(visual, start, end);
       start = end;
     }
   }
-  return visual;
 }
 
 function reverse<Value>(values: Value[], start: number, end: number): void {
@@ -1594,35 +1729,18 @@ function reverse<Value>(values: Value[], start: number, end: number): void {
   }
 }
 
-function fragmentHasFlag(
-  prepared: PreparedParagraph,
-  runIndex: number,
-  start: number,
-  end: number,
-  flag: number,
-): boolean {
-  const glyphStart = prepared.shape.runGlyphStarts[runIndex];
-  const glyphCount = prepared.shape.runGlyphCounts[runIndex];
-  if (glyphStart === undefined || glyphCount === undefined) return true;
-  const selected = glyphIndexes(prepared.shape, glyphStart, glyphCount, start, end);
-  const first = selected[0];
-  const last = selected.at(-1);
-  return (
-    first === undefined ||
-    last === undefined ||
-    ((prepared.shape.glyphFlags[first] ?? flag) & flag) !== 0 ||
-    ((prepared.shape.glyphFlags[last] ?? flag) & flag) !== 0
-  );
-}
-
-function glyphIndexes(
+/**
+ * The selected glyphs of a run are always one contiguous ascending span, so the selection is two indices. Materializing
+ * it as an array allocated one entry per glyph to describe a range that two integers already describe.
+ */
+function glyphRange(
   shape: OwnedShape,
   glyphStart: number,
   glyphCount: number,
   textStart: number,
   textEnd: number,
-): number[] {
-  if (glyphCount === 0 || textEnd <= textStart) return [];
+): { readonly start: number; readonly end: number } {
+  if (glyphCount === 0 || textEnd <= textStart) return EMPTY_GLYPH_RANGE;
   const firstCluster = shape.clusters[glyphStart];
   const lastCluster = shape.clusters[glyphStart + glyphCount - 1];
   if (firstCluster === undefined || lastCluster === undefined) {
@@ -1635,10 +1753,10 @@ function glyphIndexes(
   const selectedEnd = ascending
     ? glyphLowerBound(shape.clusters, glyphStart, glyphCount, textEnd)
     : glyphBelow(shape.clusters, glyphStart, glyphCount, textStart);
-  const indexes: number[] = [];
-  for (let glyph = selectedStart; glyph < selectedEnd; glyph += 1) indexes.push(glyph);
-  return indexes;
+  return { start: selectedStart, end: selectedEnd };
 }
+
+const EMPTY_GLYPH_RANGE = { start: 0, end: 0 } as const;
 
 function glyphLowerBound(clusters: Uint32Array, glyphStart: number, glyphCount: number, target: number): number {
   let low = glyphStart;
@@ -1663,25 +1781,23 @@ function glyphBelow(clusters: Uint32Array, glyphStart: number, glyphCount: numbe
 }
 
 function spacingBetween(prepared: PreparedParagraph, start: number, end: number): number {
-  return clusterRangeSum(prepared.clusterStarts, prepared.letterSpacingPrefix, start, end);
+  return clusterRangeSum(prepared, prepared.letterSpacingPrefix, start, end);
 }
 
-function clusterRangeSum(starts: Uint32Array, prefix: Uint32Array | Float64Array, start: number, end: number): number {
+function clusterRangeSum(
+  prepared: PreparedParagraph,
+  prefix: Uint32Array | Float64Array,
+  start: number,
+  end: number,
+): number {
   if (end <= start) return 0;
-  const first = lowerBound(starts, start);
-  const afterLast = lowerBound(starts, end);
+  // An offset past the table addresses no cluster, and answering `0` would invert the prefix difference rather than
+  // return nothing. Shaped clusters cross the Wasm boundary, so a malformed one must degrade, not silently mis-space.
+  const index = prepared.clusterIndexAt;
+  const last = index.length - 1;
+  const first = index[Math.min(start, last)] ?? 0;
+  const afterLast = index[Math.min(end, last)] ?? 0;
   return (prefix[afterLast] ?? 0) - (prefix[first] ?? 0);
-}
-
-function lowerBound(values: Uint32Array, target: number): number {
-  let low = 0;
-  let high = values.length;
-  while (low < high) {
-    const middle = low + Math.floor((high - low) / 2);
-    if ((values[middle] ?? 0) < target) low = middle + 1;
-    else high = middle;
-  }
-  return low;
 }
 
 function measurementForGeometry(
@@ -1810,6 +1926,43 @@ function equalFeatures(left: readonly ResolvedFontFeature[], right: readonly Res
       );
     })
   );
+}
+
+/**
+ * Whether two shape requests would produce identical shaped output. Compares exactly what the shaper reads, so a
+ * paragraph whose size, line height, or letter spacing changed rebuilds an equal request and reuses its shape.
+ */
+function sameShapeRequest(left: ShapeBatchRequest, right: ShapeBatchRequest): boolean {
+  if (left.textUtf16.length !== right.textUtf16.length) return false;
+  for (let index = 0; index < left.textUtf16.length; index += 1) {
+    if (left.textUtf16[index] !== right.textUtf16[index]) return false;
+  }
+  if (left.runs.length !== right.runs.length) return false;
+  for (let index = 0; index < left.runs.length; index += 1) {
+    const a = left.runs[index]!;
+    const b = right.runs[index]!;
+    if (
+      a.font !== b.font ||
+      a.textStart !== b.textStart ||
+      a.textEnd !== b.textEnd ||
+      a.direction !== b.direction ||
+      a.script !== b.script ||
+      a.language !== b.language ||
+      a.clusterLevel !== b.clusterLevel ||
+      a.flags !== b.flags ||
+      a.featureStart !== b.featureStart ||
+      a.featureCount !== b.featureCount
+    ) {
+      return false;
+    }
+  }
+  if (left.features.length !== right.features.length) return false;
+  for (let index = 0; index < left.features.length; index += 1) {
+    const a = left.features[index]!;
+    const b = right.features[index]!;
+    if (a.tag !== b.tag || a.value !== b.value || a.start !== b.start || a.end !== b.end) return false;
+  }
+  return true;
 }
 
 function ownShape(shape: ShapedBatchViews): OwnedShape {

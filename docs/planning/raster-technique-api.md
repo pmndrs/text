@@ -41,7 +41,7 @@ sources:
     title: TypeGPU to TSL integration
 generated:
   by: openai-codex/gpt-5.6
-  at: '2026-08-07T03:25:58Z'
+  at: '2026-08-07T04:49:05Z'
 ---
 
 # Raster technique and engine resource API
@@ -63,8 +63,9 @@ Bitmap, MTSDF, and Slug each need one baker and one portable technique implement
 baking, artifact validation, external-page fetching, fallback resolution, glyph partitioning, or canonical CPU instance
 packing for every engine.
 
-Every engine still needs a target, but that target is an ordinary external consumer package rather than a core subpath.
-Technique-specific GPU realization and shader code can be shared when several engines
+Every engine still needs a target. The maintained Three.js and TypeGPU targets ship as package subpaths, while a third-party
+engine may provide an external consumer package over the same public contract. Technique-specific GPU realization and
+shader code can be shared when several engines
 expose the same shader/resource backend, but scene traversal, render-pass placement, transforms, submission, fences, and
 retirement remain engine-specific.
 
@@ -195,9 +196,9 @@ interface RasterTechnique<
   descriptor(options: RasterOptionsArgument<Options>): Descriptor;
   decode(font: RegisteredFont, raster: RegisteredRaster<Kind>, signal?: AbortSignal): Promise<Data>;
 
-  select(input: RasterGlyphInput<Data>): RasterGlyphSelection<Binding>;
+  select(input: RasterGlyphInput<Data>): RasterGlyphSelection<Binding> | undefined;
   createStorage(capacity: number): Storage;
-  writeStorage(storage: Storage, range: GlyphRange, input: RasterGlyphWriteInput<Data>): void;
+  writeStorage(storage: Storage, range: GlyphRange, input: RasterGlyphWriteInput<Data, Binding>): void;
   validatePaint?(paint: GlyphPaint): void;
   dispose(data: Data): void;
 }
@@ -206,12 +207,15 @@ interface RasterGlyphInput<Data> {
   readonly data: Data;
   readonly glyphId: number;
   readonly fontSize: number;
+  readonly originX: number;
+  readonly originY: number;
   readonly rasterPixelRatio: number;
   readonly paint: ResolvedPaint;
 }
 
-interface RasterGlyphWriteInput<Data> {
+interface RasterGlyphWriteInput<Data, Binding> {
   readonly data: Data;
+  readonly binding: Binding;
   readonly glyphs: readonly RasterGlyphInput<Data>[];
 }
 
@@ -219,17 +223,11 @@ type GlyphBatchStorageShape<Storage> = {
   readonly [Field in keyof Storage]: ArrayBufferView;
 };
 
-type GlyphBatchStorage = Readonly<Record<PropertyKey, ArrayBufferView>>;
+type GlyphBatchStorage = Readonly<Partial<Record<PropertyKey, ArrayBufferView>>>;
 
 declare const rasterTechniqueTypes: unique symbol;
 
-interface RasterTechniqueTypeMap<
-  Options = unknown,
-  Descriptor extends JsonValue = JsonValue,
-  Data = unknown,
-  Binding = unknown,
-  Storage extends GlyphBatchStorageShape<Storage> = GlyphBatchStorage,
-> {
+interface RasterTechniqueTypeMap<Options, Descriptor, Data, Binding, Storage> {
   readonly options: Options;
   readonly descriptor: Descriptor;
   readonly data: Data;
@@ -242,17 +240,40 @@ interface AnyRasterTechnique {
   readonly kind: string;
   readonly extension: string;
   readonly version: number;
-  readonly [rasterTechniqueTypes]?: RasterTechniqueTypeMap;
+  readonly [rasterTechniqueTypes]?: RasterTechniqueTypeMap<unknown, JsonValue, unknown, unknown, unknown>;
 }
 
-type RasterTechniqueTypesOf<Technique extends AnyRasterTechnique> = NonNullable<Technique[typeof rasterTechniqueTypes]>;
+type RasterTechniqueTypesOf<Technique extends AnyRasterTechnique> =
+  Technique extends RasterTechnique<
+    infer _Id,
+    infer _Kind,
+    infer Options,
+    infer Descriptor,
+    infer Data,
+    infer Binding,
+    infer Storage
+  >
+    ? RasterTechniqueTypeMap<Options, Descriptor, Data, Binding, Storage>
+    : RasterTechniqueTypeMap<unknown, JsonValue, unknown, unknown, GlyphBatchStorage>;
 type RasterOptionsOf<Technique extends AnyRasterTechnique> = RasterTechniqueTypesOf<Technique>['options'];
 type RasterDataOf<Technique extends AnyRasterTechnique> = RasterTechniqueTypesOf<Technique>['data'];
 type RasterBindingOf<Technique extends AnyRasterTechnique> = RasterTechniqueTypesOf<Technique>['binding'];
 type GlyphBatchStorageOf<Technique extends AnyRasterTechnique> = RasterTechniqueTypesOf<Technique>['storage'];
 
+type RasterTechniqueDefinition<
+  Id extends string,
+  Kind extends string,
+  Options,
+  Descriptor extends JsonValue,
+  Data,
+  Binding,
+  Storage extends GlyphBatchStorageShape<Storage>,
+> = Omit<RasterTechnique<RasterTechniqueId & Id, Kind, Options, Descriptor, Data, Binding, Storage>, 'id'> & {
+  readonly id: Id;
+};
+
 declare function defineRasterTechnique<
-  const Id extends RasterTechniqueId,
+  const Id extends string,
   const Kind extends string,
   Options,
   Descriptor extends JsonValue,
@@ -260,9 +281,17 @@ declare function defineRasterTechnique<
   Binding,
   Storage extends GlyphBatchStorageShape<Storage>,
 >(
-  technique: RasterTechnique<Id, Kind, Options, Descriptor, Data, Binding, Storage>,
-): RasterTechnique<Id, Kind, Options, Descriptor, Data, Binding, Storage>;
+  technique: RasterTechniqueDefinition<Id, Kind, Options, Descriptor, Data, Binding, Storage>,
+): RasterTechnique<RasterTechniqueId & Id, Kind, Options, Descriptor, Data, Binding, Storage>;
+
+declare function defineRasterResourceId<const Id extends string>(id: Id): RasterResourceId & Id;
 ```
+
+The public definition boundary accepts an ordinary non-empty string literal and returns the branded technique identity.
+Technique authors use `defineRasterResourceId()` for the stable resource identities returned by `select()`. The original
+specification required both branded strings as inputs but exposed no safe constructor, forcing third-party packages to use
+unchecked casts before they could implement the interface. The implementation proof preserved the branded outputs while
+moving validation to the only boundaries that create them. Empty identifiers fail immediately.
 
 `AnyRasterTechnique` contains only the common identity shape. It does not instantiate the generic technique with `any`, and
 it cannot be used to perform typed decode, selection, or storage writes. Its associated types intentionally widen to
@@ -270,7 +299,7 @@ it cannot be used to perform typed decode, selection, or storage writes. Its ass
 
 ```ts
 const mtsdf = defineRasterTechnique({
-  id: MTSDF_TECHNIQUE_ID,
+  id: 'pmndrs.mtsdf',
   kind: 'mtsdf',
   extension: 'PMNDRS_font_distance_field',
   version: 0,
@@ -282,6 +311,8 @@ const mtsdf = defineRasterTechnique({
   dispose: disposeMtsdfData,
 });
 
+const atlasPage = defineRasterResourceId('inter/atlas/0');
+
 type Data = RasterDataOf<typeof mtsdf>; // MtsdfData
 type Binding = RasterBindingOf<typeof mtsdf>; // MtsdfBinding
 type Storage = GlyphBatchStorageOf<typeof mtsdf>; // MtsdfGlyphBatchStorage
@@ -291,10 +322,17 @@ The helper's generic parameters are inference variables in its declaration; rast
 associated type remains `unknown`, which blocks technique-specific use until the author supplies enough type information. It
 never silently degrades to `any`.
 
-`select()` returns the physical resource and pipeline division for one resolved glyph. Core uses it while building stable
-glyph batches; a target never repeats this selection. `resource` must be a stable technique/runtime identity, while
-`binding` is an immutable value that describes how to address that resource. Implementations need not allocate either value
-per glyph.
+The erased `GlyphBatchStorage` record is partial because a concrete storage has a finite set of named fields. A total
+`Record<PropertyKey, ArrayBufferView>` would falsely claim that every possible lookup exists and would reject ordinary
+interfaces such as `{ origins: Float32Array; glyphs: Uint16Array }` for lacking an index signature. The self-mapped
+`GlyphBatchStorageShape<Storage>` remains the strict concrete check: every field a technique declares must be an
+`ArrayBufferView`.
+
+`select()` returns the physical resource and pipeline division for one resolved glyph. It returns `undefined` for a shaped
+glyph that intentionally has no renderable raster record, such as whitespace. Missing-glyph fallback is already resolved
+before this call; omission is not another fallback mechanism. Core uses the result while building stable glyph batches, and
+a target never repeats this selection. `resource` must be a stable technique/runtime identity, while `binding` is an
+immutable value that describes how to address that resource. Implementations need not allocate either value per glyph.
 
 ```ts
 interface RasterGlyphSelection<Binding> {
@@ -328,8 +366,11 @@ or font records to derive it again.
 that requires another vertex layout. It is not the generic paragraph/span `renderVariant` and is not an application effect
 key. A raster program combines this technique value with its own variant compatibility key when compiling final draws.
 
-The technique also defines the canonical structure-of-arrays storage and writes it during core synchronization. This is
-where origin, size, glyph-record index, page index, paint index, or other technique values become renderer-ready CPU fields.
+The technique also defines the canonical structure-of-arrays storage and writes it during core synchronization. Each glyph
+input carries its paragraph-local displayed origin after any caller override, while the write request carries the exact
+immutable binding that core already used to form the physical batch. This is where origin, size, glyph-record index, page
+index, paint index, or other technique values become renderer-ready CPU fields without repeating layout or resource
+selection.
 
 ## Realize resources in an engine target
 
@@ -461,7 +502,7 @@ implementation proof:
 - inspects the emitted WebGPU shader and proves Bitmap and Slug output parity against the native TSL path;
 - measures tree-shaken raw, gzip, and Brotli transfer cost plus graph construction and shader compilation cost;
 - distinguishes `typegpu`, `@typegpu/three`, transform metadata, and optional build-plugin cost;
-- keeps the dependency in an optional external shader/integration package so the default Three path and portable technique
+- keeps the dependency in an optional shader/integration subpath so the default Three path and portable technique
   do not pay for it.
 
 The npm package's unpacked size is not application bundle evidence. If the proof makes TypeGPU the authoritative source,

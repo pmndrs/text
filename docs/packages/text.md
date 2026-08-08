@@ -5,7 +5,7 @@ description: Implements public font loading, shaping, paragraph measurement, sta
 resource: ../../packages/text
 workspace_package: '@pmndrs/text'
 documentation_type: reference
-source_digest: 'sha256:59cfc72dfcff42889b5e951c630c8778b058eac24f5b240662cc43cab0be8958'
+source_digest: 'sha256:6ae55db41be216c0ccf2a79b55167c964770e5fbc6c490940d6b68b4b3bca512'
 tags: [package, public-api, typescript, contracts]
 sources:
   - id: manifest
@@ -27,7 +27,7 @@ sources:
     resource: https://github.com/DefinitelyTyped/DefinitelyTyped/pull/75246
     title: Upstream NodeExtras lookup-map fix
   - id: bitmap-identity
-    resource: ../../packages/text/src/raster/bitmap.ts
+    resource: ../../packages/text/src/raster/bitmap-technique.ts
     title: Bitmap descriptor and raster identity implementation
   - id: bitmap-baker
     resource: ../../packages/text/rust/bitmap-baker
@@ -52,7 +52,7 @@ sources:
     title: MTSDF direct-memory TypeScript host
   - id: mtsdf-contract
     resource: ../../packages/text/src/raster/msdf.ts
-    title: Fixed MTSDF runtime module
+    title: Portable MTSDF runtime technique
   - id: mtsdf-baker
     resource: ../../packages/text/src/bakers/msdf.ts
     title: Fixed MTSDF baker host
@@ -75,8 +75,8 @@ sources:
     resource: ../../packages/text/src/bakers/slug.ts
     title: Direct-memory Slug baker host
   - id: slug-runtime
-    resource: ../../packages/text/src/raster/slug.ts
-    title: Fixed analytic Slug runtime module
+    resource: ../../packages/text/src/raster/slug-technique.ts
+    title: Portable analytic Slug runtime technique
   - id: slug-shaders
     resource: ../../packages/text/src/internal/slug-shaders
     title: Three.js TSL Slug shader implementation
@@ -88,7 +88,31 @@ sources:
     title: Shared direct-memory raster baker host
   - id: raster-atlas-runtime
     resource: ../../packages/text/src/internal/raster-atlas.ts
-    title: Shared lossless-atlas runtime adapter
+    title: Renderer-neutral lossless-atlas decoder
+  - id: raster-technique-api
+    resource: ../../packages/text/src/raster-technique.ts
+    title: Portable raster technique contract
+  - id: text-runtime-v1
+    resource: ../../packages/text/src/text-runtime.ts
+    title: Target-v1 renderer-neutral text runtime
+  - id: paragraph-batch-v1
+    resource: ../../packages/text/src/paragraph-batch.ts
+    title: Target-v1 paragraph batching and canonical storage
+  - id: formatted-text-v1
+    resource: ../../packages/text/src/formatted-text.ts
+    title: Target-v1 formatted text and span composer
+  - id: paragraph-attachment-v1
+    resource: ../../packages/text/src/paragraph-batch-attachment.ts
+    title: Target-v1 renderer attachment coordinator
+  - id: three-v1
+    resource: ../../packages/text/src/three.ts
+    title: Maintained target-v1 Three.js integration
+  - id: r3f-v1
+    resource: ../../packages/text/src/r3f.ts
+    title: Maintained target-v1 React Three Fiber integration
+  - id: typegpu-v1
+    resource: ../../packages/text/src/typegpu.ts
+    title: Maintained target-v1 TypeGPU integration
   - id: raster-ktx
     resource: ../../packages/text/src/internal/raster-ktx.ts
     title: Shared dependency-light KTX2 validation
@@ -98,9 +122,6 @@ sources:
   - id: raster-validation
     resource: ../../packages/text/src/internal/raster-artifact-validation.ts
     title: Shared standalone raster artifact validation
-  - id: raster-batch-runtime
-    resource: ../../packages/text/src/internal/raster-batch.ts
-    title: Shared instanced-raster batch primitives
   - id: composition
     resource: ../../packages/text/src/internal/compose-bake.ts
     title: Generic core/raster artifact composer
@@ -129,25 +150,158 @@ sources:
     resource: ../../packages/text/src/paragraph.ts
     title: Paragraph engine implementation
   - id: text-object
-    resource: ../../packages/text/src/text.ts
+    resource: ../../packages/text/src/three/text.ts
     title: Framework-neutral Three.js Text object
   - id: raster-runtime
     resource: ../../packages/text/src/raster-runtime.ts
     title: Shared decoded-raster runtime
+  - id: mtsdf-technique
+    resource: ../../packages/text/src/raster/msdf.ts
+    title: Renderer-neutral MTSDF technique
+  - id: bitmap-technique
+    resource: ../../packages/text/src/raster/bitmap-technique.ts
+    title: Renderer-neutral Bitmap technique
+  - id: slug-technique
+    resource: ../../packages/text/src/raster/slug-technique.ts
+    title: Renderer-neutral Slug technique
   - id: react-runtime
-    resource: ../../packages/text/src/react.ts
-    title: React 19 reconciliation layer
+    resource: ../../packages/text/src/r3f.ts
+    title: React Three Fiber reconciliation layer
   - id: unicode-analysis
     resource: ../../packages/text/src/internal/unicode.ts
     title: Unicode analysis implementation
 generated:
-  by: openai-codex/gpt-5.6
-  at: '2026-08-07T01:16:02Z'
+  by: anthropic-claude/opus-5
+  at: '2026-08-08T08:15:00Z'
 ---
 
 # Package reference: `@pmndrs/text`
 
-Status: ✅ Milestone 9 Slug integration is complete
+Status: 🚧 Target-v1 core and maintained integrations are in progress
+
+Target-v1 now has an executable renderer-neutral `TextRuntime`, `ParagraphBatch`, attachment state machine, and Bitmap,
+MTSDF, and Slug techniques. The maintained `/three` adapter renders all three techniques through `WebGPURenderer` on native
+WebGPU and forced WebGL2, `/r3f` retains those Three objects through React 19 Strict Mode without leaking font leases, and
+the first `/typegpu` slice provides the caller-owned-root engine plus exact program/target boundary. Built-in TypeGPU raster
+programs and their live-pixel proof remain open. `RasterTechnique` preserves
+exact options, descriptor, decoded data, binding, and canonical storage types without `any`; its public helpers validate
+and brand technique and resource identities without requiring casts. A `RasterGlyphInput` is valid only for the `select`
+or `writeStorage` call that receives it, because packing pools one input per glyph and rewrites it on every update rather
+than allocating a glyph-sized set each time; a technique that needs a field beyond the call copies the value.
+`/raster/bitmap`, `/raster/mtsdf`, and `/raster/slug`
+decode and authenticate CPU resources without importing Three, explicitly omit absent records, select stable physical
+bindings, and pack positive-down paragraph origins plus technique fields into typed canonical arrays. Bitmap selects a
+strike/page per glyph and retains R8 pages; MTSDF retains one RGBA8 atlas-array binding per font; Slug retains its original
+RGBA16F curve, R32 header, and R16 reference bytes so Three's R16-to-R32 workaround remains target-owned. Focused package
+tests prove selection, range writes, binding identity, coordinates, paint, and analytic addresses. The merged-v0 Bitmap and
+Slug renderer modules, the `/raster/msdf` spelling, the merged-v0 `Text`, and the `/react` binding are deleted; `/raster/bitmap`, `/raster/mtsdf`, `/raster/slug`, `/three`, `/r3f`, and `/typegpu` are the whole renderer surface. The
+Bitmap conformance lane no longer needs a fallback: driven by the target-v1 `Text`, `ThreeBitmapTarget`, and
+`LoadedFont` raster data, it reproduces the benchmark's independent CPU atlas compositor in zero mismatched bytes and
+returns the same pinned full-frame hash `a47930d3…e893`, the same 5,930 lit and 3,473 half-coverage pixels, and the same
+`[68, 18, 313, 112]` ink bounds the merged-v0 renderer produced. Reaching that required two corrections to the exported
+Bitmap graph, both invisible to a coverage-threshold smoke check and both caught only by the exact oracle: the graph had
+inherited merged-v0's vertical atlas flip, which belongs to that renderer's `flipY`-enabled upload rather than to the
+target-v1 pages, and it had dropped the physical-pixel snap the strike's integer placement depends on. Every Presentation
+surface now renders through the target-v1 techniques and the `/three` adapter.
+
+The `/three` adapter resolves each technique's target through a program registry keyed by the technique's stable
+identifier rather than its object identity, and pre-registers the three first-party programs. Identifier keying preserves
+the public raster extension boundary proven in milestone 10: a third party registers a Three program for its own technique
+through `registerThreeRasterProgram`, and an application may wrap a first-party technique to instrument its runtime baker
+without the wrapper losing its program. An unregistered technique fails at batch construction with a typed error naming
+the identifier instead of rendering nothing. `registerThreeRasterProgram` infers that technique, so a program may type its
+prepared batches, storage, and binding concretely; the registry itself stays heterogeneous and holds the erased form after
+the pairing is proven at the registration call.
+
+`/three` also exports each canonical technique shader as `bitmapShader`, `mtsdfShader`, and `slugShader`.[^three-v1] Each
+takes one glyph instance's resolved nodes plus that batch's bound GPU resources and returns a named readonly output:
+position, coverage, resolved colour, opacity, and the intermediate stages the technique produces, such as MTSDF's separate
+fill, outline-ring, and shadow coverage or Slug's dilated render coordinate. These are not a parallel copy maintained for
+external use. `ThreeBitmapTarget`, `ThreeMtsdfTarget`, and `ThreeSlugTarget` build their materials from exactly these
+functions, so a composed program cannot drift from what the first-party path renders and deleting an export breaks the
+built-in target rather than an unused mirror. Each function reads `positionLocal` and `uv()` from the technique's unit
+quad, so a program supplying its own geometry owns that correspondence.
+
+`bitmapShader` additionally publishes `clipPosition`, the projected quad rounded to whole physical pixels, which a program
+assigns to `material.vertexNode`. Bitmap coverage is authored at one atlas texel per device pixel, so an unsnapped quad
+resamples the strike rather than reproducing it, and placing that snap in the exported shader rather than in the built-in
+target is what makes a composed program inherit it by construction instead of by convention. The output carries no other
+route to a vertex stage, so the seam cannot be silently skipped. MTSDF and Slug deliberately publish no such member: a
+distance field reconstructs its edge from the screen-space gradient and Slug integrates coverage analytically from
+outlines, so both are correct at any subpixel placement and must keep the default projection. Bitmap pages upload in the
+atlas's own top-down row order with `flipY` disabled, and `atlasUv` addresses that same space directly, so the sampled row
+is the baked row on both backends.
+
+The composed-program proof renders one paragraph twice on native WebGPU and forced WebGL2: once through the pre-registered
+Bitmap program, then through a third-party program that owns its own attributes, geometry, and material and composes only
+its final colour over `bitmapShader`. Both passes light an identical 2,616-pixel set while the composed pass emits no green
+channel, so the custom program inherited the canonical placement, snapping, and coverage instead of reimplementing them.
+The retained proof pages light 2,606 pixels for Bitmap, 1,935 for MTSDF, and 1,510 for Slug on both backends.
+
+Two target-v1 raster defects surfaced when the benchmark began driving these programs against the exact conformance
+oracles rather than against themselves. Slug published each quad's lower-left em corner while its shader documented and
+consumed the upper-left, so every glyph integrated its coverage vertically mirrored inside a correctly placed quad;
+publishing the top and walking em space downward moved the CPU band-walk reference from 22.94 mean absolute error with
+22,911 severe error pixels to 0.223 with none, and restored the independent browser-rasterized source-outline envelope.
+Bitmap carried two defects at once. It kept the merged renderer's vertical atlas flip, which belonged to a `flipY`
+upload the target-v1 program no longer performs, so every fragment sampled the mirrored row of its page; and it dropped
+the device-pixel snapping milestone 1 records as a hard density contract. Correcting both restores the pinned merged-v0
+frame exactly: hash `a47930d3…e893`, 3,473 half-coverage pixels, and ink bounds `[68, 18, 313, 112]`.
+
+Both defects were masked by self-comparison. A rendered-pixel count taken from the program under test only proves the
+program is stable, not correct, so each technique is held against a reference computed independently of it.
+
+The Three `FontLoader` forwards the two per-load capabilities the core runtime already accepted but the adapter withheld.
+A request may carry an `AbortSignal`, so a cancelled load stops instead of running to completion; the merged-v0 registry
+and loader both accepted one, and several consumers abort mid-load. Loader options may name a `FontRegistry`, so an
+application holding registry-scoped state reaches the fonts this loader produces rather than receiving fonts owned by a
+registry it cannot address.
+
+Readonly `Text.gpuBytes` and `TextGroup.gpuBytes` report the bytes of the GPU resources their attached target currently
+retains: the textures it shares across batches plus the instance buffers its committed revision owns. Reporting belongs to
+the target because only the target knows the realized allocation — Bitmap's R8 pages, MTSDF's layer-padded RGBA8 atlas
+array, and Slug's RGBA16F curves, R32UI headers, and pair-packed R32UI references — while the portable techniques end at
+CPU data and never describe engine residency. A revision that transferred its resources to a successor reports nothing, so
+a warm commit cannot count the same buffers twice; an unbound `Text` and a third-party target that omits the optional
+`ThreeRasterTargetAccounting` accessor both report zero. A `Text` inside a `TextGroup` shares that group's target, so both
+objects report the same batch-wide total rather than a per-paragraph share. On the retained proof pages at the default 256-glyph capacity,
+16-pixel Inter Bitmap measures 707,584 bytes as one 1024×679 R8 page plus 12,288 attribute bytes, MTSDF measures
+41,971,712 bytes as its 41,943,040-byte padded atlas array plus 28,672 attribute bytes, and Slug measures 3,190,784 bytes;
+the same totals are reported on WebGPU and forced WebGL2.
+
+The `txt` and `span` composer emits UTF-16 ranges over the composed string.[^formatted-text-v1] One span carries two kinds
+of data with different consumption points: shaping data (`font`, `fontSize`, `lineHeight`, `letterSpacing`, `language`,
+`direction`, `features`) must resolve before shaping because it segments runs and changes advances, while paint data
+(`color`, `opacity`, `outline`, `shadow`) and the render variant resolve at glyph-instance packing. Both kinds resolve
+through one cascade with one set of semantics, and part company only where each is consumed: the resolved shaping style
+becomes disjoint segments that intersect with UAX #24 script and UAX #9 bidi runs before shaping, and the resolved paint
+becomes per-glyph values indexed during packing. Resolution therefore cannot give one answer for `fontSize` and a
+different one for `color`.
+
+The cascade folds every span covering a cluster from the outermost inward and merges **per property**, so a span states
+only what it changes and inherits the rest from the scope enclosing it. A style-only span shapes from the surrounding
+font; a span stating only `color` keeps the surrounding opacity, outline, and shadow; a span stating only `opacity`
+re-applies that opacity to the inherited fill, outline, and shadow colours. An absent property group stays absent rather
+than arriving as an empty object, so a span cannot silently reset a range to a default glyph colour or shaping style.
+
+Precedence follows containment rather than array order: the innermost covering span wins each property, and spans over
+exactly the same range fall back to array order. Producer emission order is therefore not load-bearing, and a hand-built
+span array that lists a contained span before the span enclosing it still resolves innermost-first. Partial overlap has no
+innermost span at all, so it is rejected with a typed `SpanNestingError` naming both offending spans and their ranges
+instead of resolving to whichever span a consumer happened to visit last. The font-fallback overlay the layout path
+generates is machine-produced rather than authored, so it is split at the authored boundaries it crosses and stays inside
+the same invariant. Resolution runs once per paragraph revision, keyed on the property snapshot, so packing indexes a
+precomputed per-glyph result instead of rescanning the span array for every glyph.
+
+Ranges count UTF-16 code units, so an astral character before a span shifts that
+span by two. Replacement content owns its own formatting on both the core `Paragraph` and the Three `Text`: assigning a
+literal installs that literal's spans, and assigning a plain string clears the spans it replaced rather than reinterpreting
+stale ranges against unrelated text. Runtime integration covers each of these against real shaped output — inherited font
+handles and glyph IDs, a nested style-only span shaping from the font its enclosing span selected, each paint property
+inherited independently through MTSDF fill, outline, and shadow storage, a span font size moving both shaped advances and
+the line break, the typed nesting error and order-independent precedence, per-glyph font sizes and canonical linear
+colours, cluster indices across a surrogate pair, tuple-spread and direct `span` calls producing identical layout, and a
+formatted literal driven through `TextGroup` binding, `updateMatrixWorld`, and the drawn per-run instance counts.
 
 `Text` is a composite `Object3D`, not a `Group`, so it honors the primary `groupOrder` of any caller-owned parent Group.
 Generated raster batches also use neutral `Object3D` roots rather than nested Groups. `Text.renderOrder` becomes the secondary
@@ -266,7 +420,7 @@ Item 5.2 implements final positioned `ParagraphLayout`. It caches line plans ind
 
 Item 5.3 now has a conformant Unicode 17 bidi foundation. The package-owned shaper reuses `unicode-bidi` 0.3.18's maintained post–Unicode-15 UAX #9 algorithm under `no_std + alloc`, disables its Unicode 16 tables, and supplies generated Unicode 17 `Bidi_Class` and normalized paired-bracket data through the crate's custom data-source seam. The Rust-generated JSON ABI describes one direct-memory UTF-16 analysis call and borrowed SoA levels/classes/paragraph arrays; no browser ICU, WASI, binding generator, or ambient Unicode version participates. Hash-pinned official inputs cover `DerivedBidiClass.txt`, `BidiTest.txt`, and `BidiCharacterTest.txt`. Ordinary integration tests expand the generic corpus to all 770,241 requested paragraph-direction cases and execute all 91,707 character-specific cases, comparing paragraph level, every specified resolved level, and complete visual order. Wasm integration separately proves supplementary-plane code units and explicit/automatic paragraph directions.
 
-Item 5.3 completes paragraph-level bidi and line policy. Preparation resolves overlapping span properties with input-order-preserving active-value sweeps, then intersects style, UAX #24 script, and precomputed UAX #9 runs in one interval pass rather than rescanning every cross-product. It shapes each run in its resolved direction, copies borrowed analysis/shaping data, applies line-specific L1 reset and L2 visual ordering, and batches only unsafe changed boundaries. Boundary validation occurs once while copying/normalizing public input; normalized shaping and layout loops do not repeat generic object checks. A pinned Amiri 1.002 fixture covers joining, combining marks, lam-alef forms, Arabic numbers, and Latin: HarfRust over the source font equals HarfRust over the reduced SFNT extracted from the validated GLB exactly, and pinned HarfBuzz 13 independently agrees on every glyph field.
+Item 5.3 completes paragraph-level bidi and line policy. Preparation resolves nested span properties through the shared per-property cascade, which folds covering spans from the outermost inward in one boundary sweep, then intersects the resulting style segments with UAX #24 script and precomputed UAX #9 runs in one interval pass rather than rescanning every cross-product. It shapes each run in its resolved direction, copies borrowed analysis/shaping data, applies line-specific L1 reset and L2 visual ordering, and batches only unsafe changed boundaries. Boundary validation occurs once while copying/normalizing public input; normalized shaping and layout loops do not repeat generic object checks. A pinned Amiri 1.002 fixture covers joining, combining marks, lam-alef forms, Arabic numbers, and Latin: HarfRust over the source font equals HarfRust over the reduced SFNT extracted from the validated GLB exactly, and pinned HarfBuzz 13 independently agrees on every glyph field.
 
 The generated `paragraph-bidi-layout-v0.json` contract owns complete SoA values for two mixed-direction Amiri layouts plus exact start/center/end/justify, clip, max-lines, and width/height ellipsis policies over Inter. Alignment-only and height-only compatible layouts share cached boundary shaping; every changed boundary is reported as one batched reshape. Ellipsizing a line ending in a mandatory break removes that control cluster before inserting the ellipsis, so the visible range never crosses into the hidden line. Fixed-seed fuzzing mutates Unicode text—including expected malformed UTF-16 rejection—axis modes, widths/heights, wrapping, alignment, truncation, letter spacing, line height, and direction twice, requiring finite, internally consistent, deterministic output.
 
@@ -283,6 +437,10 @@ Roadmap item 7.2 adds an optional presentation seam to this bitmap subpath witho
 The canonical composed Inter fixture proves GLB → registry → public `Text` → HarfRust → paragraph layout → bitmap decode → GPU upload → instanced draw in the benchmark product. The five-lane benchmark ipsum produces 120 visible glyphs, zero missing glyphs, and one draw on both backends. Density fixtures carry 16 and 32 ppem strikes; exact-strike rendering keeps public geometry at 16 CSS px while selecting 16 device pixels at 1× and 32 device pixels at 2×. A record-level Rust invariant proves atlas and native plane dimensions are identical. The benchmark independently CPU-composes decoded atlas texels at snapped placements and requires every normalized GPU byte to match for both the full frame and a resized, intentionally clipped frame; WebGPU and WebGL2 produce the same full-frame hash at each DPR. Bitmap accepts fill and opacity but rejects outline and shadow through the optional raster paint-validation seam instead of silently discarding them. Hinted grayscale and four-phase coverage packing remain measured research, while LCD/ClearType rendering is an explicit non-goal. The [roadmap](../roadmap/roadmap.md) remains the only completion ledger.
 
 The five-line, 120-glyph text above is the bounded conformance specimen. The separate live benchmark ipsum exceeds 1,000 characters and renders 1,150 glyphs through the same one-draw public `Text` path.
+
+Paragraph layout is tiered by what each product depends on, so a change enters at its own tier instead of rebuilding the paragraph. Text analysis follows the text and its base direction, shaping adds the fonts, spans, and style topology, metrics add font size and spacing, the line plan adds the content box, and geometry adds alignment. A retained layout session holds the prepared paragraph across updates, so a content-box change never enters preparation and reuses the caches the paragraph already keeps, while font fallback reads shaped glyph identity rather than laying the paragraph out to locate `.notdef`. Positioning writes its output into typed arrays sized from the shaped runs and resolves a text offset to a cluster through a table built once per preparation, replacing a lower-bound search that ran twice at every cluster boundary of every glyph. Both position axes accumulate in double precision and narrow once, because alignment and justification read an axis back after storing it.
+
+`pnpm scripts run text:layout-benchmark` measures that path. It reports a median of warmed repetitions for each invalidation class separately, with the relative standard deviation beside it, because the classes invalidate different tiers and an average across them hides whichever one is slow. Boundary reshaping is gone: it requested the whole run as shaping context, which is the context the retained shape was produced with, so it returned the glyphs it already held on roughly every line of every layout. Measured on an identical workload against the pre-tiering commit at 25,515 glyphs, a reflow lays out in 8.12 ms against 110.40 ms, a resize in 11.98 ms against 103.54 ms, and a text edit in 31.85 ms against 109.66 ms, with the pinned layout hashes unchanged. Phase attribution came from opt-in spans that have since been removed once their evidence was recorded; reinstating them is a diagnostic change, not a shipped feature.
 
 ## Package scripts
 

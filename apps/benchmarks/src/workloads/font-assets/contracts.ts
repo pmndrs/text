@@ -1,4 +1,7 @@
-import type { AnyRasterInput, BakeProgressListener, FontRegistry, RegisteredFont } from '@pmndrs/text';
+import type { BakeProgressListener, FontRegistry, LoadedFont } from '@pmndrs/text';
+import type { bitmap as bitmapTechnique } from '@pmndrs/text/raster/bitmap';
+import type { msdf as mtsdfTechnique } from '@pmndrs/text/raster/msdf';
+import type { slug as slugTechnique } from '@pmndrs/text/raster/slug';
 
 import type { BenchmarkFontFixture } from '../../benchmark/font-fixtures';
 import type { FontDelivery, RasterTechnique } from '../../benchmark/url-state';
@@ -55,15 +58,31 @@ export type BenchmarkFontAssetRequest =
       readonly bakedArtifact?: BakedSlugArtifactSource;
     });
 
-export interface BenchmarkFontAsset {
-  readonly technique: RasterTechnique;
+interface CommonBenchmarkFontAsset {
   readonly artifactBytes: number;
   readonly atlasGpuBytes: number;
   readonly compressedBytes: number;
-  readonly font: RegisteredFont;
   readonly metrics: FontDeliveryMetrics;
-  readonly raster: AnyRasterInput;
 }
+
+/**
+ * One fixture loaded exactly once through the target-v1 `FontLoader`. `loaded` owns the technique, its decoded raster
+ * data, the registered font, and the text runtime, so every scene reads its font from `loaded.font` rather than from a
+ * separately projected handle.
+ */
+export type BenchmarkFontAsset =
+  | (CommonBenchmarkFontAsset & {
+      readonly technique: 'bitmap';
+      readonly loaded: LoadedFont<typeof bitmapTechnique>;
+    })
+  | (CommonBenchmarkFontAsset & {
+      readonly technique: 'mtsdf';
+      readonly loaded: LoadedFont<typeof mtsdfTechnique>;
+    })
+  | (CommonBenchmarkFontAsset & {
+      readonly technique: 'slug';
+      readonly loaded: LoadedFont<typeof slugTechnique>;
+    });
 
 export interface BenchmarkFontAssetPreloadRequest {
   readonly technique: RasterTechnique;

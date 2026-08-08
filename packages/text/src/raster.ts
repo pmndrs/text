@@ -145,8 +145,8 @@ export interface RasterModule<Kind extends string, Resource, DrawBatch extends R
 // so a concrete `RasterModule<'bitmap', ...>` no longer satisfies this erasure.
 export type AnyRasterModule = RasterModule<any, any, any, any>;
 
-export type RasterKindOf<Module extends AnyRasterModule> =
-  Module extends RasterModule<infer Kind, any, any, any> ? Kind : never;
+export type RasterKindOf<Raster extends { readonly kind: string }> =
+  Raster extends RasterModule<infer Kind, any, any, any> ? Kind : Raster['kind'];
 
 export type RasterResourceOf<Module extends AnyRasterModule> =
   Module extends RasterModule<any, infer Resource, any, any> ? Resource : never;
@@ -154,7 +154,7 @@ export type RasterResourceOf<Module extends AnyRasterModule> =
 export type RasterBatchOf<Module extends AnyRasterModule> =
   Module extends RasterModule<any, any, infer DrawBatch, any> ? DrawBatch : never;
 
-export type RasterOptionsOf<Module extends AnyRasterModule> =
+export type RasterModuleOptionsOf<Module extends AnyRasterModule> =
   Module extends RasterModule<any, any, any, infer Options> ? Options : never;
 
 type RasterRequestBase<Module extends AnyRasterModule> = {
@@ -162,14 +162,16 @@ type RasterRequestBase<Module extends AnyRasterModule> = {
 };
 
 export type RasterRequest<Module extends AnyRasterModule> = RasterRequestBase<Module> &
-  ([RasterOptionsOf<Module>] extends [never]
+  ([RasterModuleOptionsOf<Module>] extends [never]
     ? { readonly options?: never }
-    : undefined extends RasterOptionsOf<Module>
-      ? { readonly options?: RasterOptionsOf<Module> }
-      : { readonly options: RasterOptionsOf<Module> });
+    : undefined extends RasterModuleOptionsOf<Module>
+      ? { readonly options?: RasterModuleOptionsOf<Module> }
+      : { readonly options: RasterModuleOptionsOf<Module> });
 
 export type RasterInput<Module extends AnyRasterModule> =
-  RasterOptionsOptional<RasterOptionsOf<Module>> extends true ? Module | RasterRequest<Module> : RasterRequest<Module>;
+  RasterOptionsOptional<RasterModuleOptionsOf<Module>> extends true
+    ? Module | RasterRequest<Module>
+    : RasterRequest<Module>;
 
 export type AnyRasterInput =
   | AnyRasterModule

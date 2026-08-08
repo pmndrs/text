@@ -1,9 +1,9 @@
 export const packageSizeBudgets = {
   'browser-core': {
-    rawBytes: 341_000,
-    minifiedBytes: 258_500,
-    gzipBytes: 75_000,
-    brotliBytes: 57_500,
+    rawBytes: 388_000,
+    minifiedBytes: 284_000,
+    gzipBytes: 82_400,
+    brotliBytes: 63_500,
   },
   'font-validator-js': {
     rawBytes: 741_000,
@@ -24,8 +24,8 @@ export const packageSizeBudgets = {
     brotliBytes: 2_850,
   },
   'text-shaper-js': {
-    rawBytes: 54_000,
-    minifiedBytes: 38_000,
+    rawBytes: 55_000,
+    minifiedBytes: 38_500,
     gzipBytes: 10_500,
     brotliBytes: 9_500,
   },
@@ -113,9 +113,11 @@ export const packageSizeBudgets = {
     gzipBytes: 168_326,
     brotliBytes: 137_100,
   },
+  // Raw and minified rose for the allocation-free grapheme script resolution; the growth is comment-dominated, at
+  // +3,010 raw against +298 Brotli, because the parallel-array form needs its reasoning recorded next to it.
   'unicode-analysis-js': {
-    rawBytes: 165_000,
-    minifiedBytes: 141_000,
+    rawBytes: 171_000,
+    minifiedBytes: 143_000,
     gzipBytes: 42_500,
     brotliBytes: 31_500,
   },

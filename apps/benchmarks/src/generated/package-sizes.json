@@ -10,11 +10,11 @@
       "label": "Browser core",
       "status": "measured",
       "format": "javascript",
-      "sha256": "9ca630720749bd6cfe05890e0c8f532ed2e229c2c36887a8af4d7ca469a70444",
-      "rawBytes": 340812,
-      "minifiedBytes": 258037,
-      "gzipBytes": 74457,
-      "brotliBytes": 57290
+      "sha256": "8af458da131f8017cae1e9e5e8984051ab4fc57ed2a043f8cdc74e0216a0dbc5",
+      "rawBytes": 384896,
+      "minifiedBytes": 282563,
+      "gzipBytes": 81948,
+      "brotliBytes": 63199
     },
     {
       "id": "font-validator-js",
@@ -54,11 +54,11 @@
       "label": "Text shaper JS",
       "status": "measured",
       "format": "javascript",
-      "sha256": "e3aa4a67647d78be532ae56f01526eb745c5bdab5219a516373aff19b218ef1e",
-      "rawBytes": 52985,
-      "minifiedBytes": 36966,
-      "gzipBytes": 10099,
-      "brotliBytes": 8981
+      "sha256": "1160e9b39b6ef5bcea15d475f57823fec80ae5b60fc103f58482555262f64b2a",
+      "rawBytes": 54460,
+      "minifiedBytes": 38027,
+      "gzipBytes": 10262,
+      "brotliBytes": 9134
     },
     {
       "id": "text-shaper-wasm",
@@ -76,33 +76,33 @@
       "label": "Bitmap runtime JS graph",
       "status": "measured",
       "format": "javascript",
-      "sha256": "db2272cc995d5561bf8829897f55668502295f80beae679088b09557e22c1ea3",
-      "rawBytes": 388324,
-      "minifiedBytes": 287345,
-      "gzipBytes": 82263,
-      "brotliBytes": 63964
+      "sha256": "9af4ebed9b0712bedbc887529ea2753a49d2f52214742f376ba2184bbec94675",
+      "rawBytes": 89604,
+      "minifiedBytes": 60671,
+      "gzipBytes": 16081,
+      "brotliBytes": 14229
     },
     {
       "id": "mtsdf-runtime-js",
-      "label": "MTSDF runtime JS graph",
+      "label": "MSDF runtime JS graph",
       "status": "measured",
       "format": "javascript",
-      "sha256": "3399c72d46bf210d813343950791b4d5114d37f0410f261d2c72fdd0aa7b2a9f",
-      "rawBytes": 397032,
-      "minifiedBytes": 291509,
-      "gzipBytes": 83717,
-      "brotliBytes": 65318
+      "sha256": "c194d5f368e7224b83a351098a7ebaa2e5daac9d6b4e853e01b490cf9b580ea2",
+      "rawBytes": 94082,
+      "minifiedBytes": 63216,
+      "gzipBytes": 16774,
+      "brotliBytes": 14807
     },
     {
       "id": "slug-runtime-js",
       "label": "Slug runtime JS graph",
       "status": "measured",
       "format": "javascript",
-      "sha256": "f6ccace1a011dec2582d874dc7bcb3fd070f4ad04de45f5ae1c507c6e4156c77",
-      "rawBytes": 400767,
-      "minifiedBytes": 292301,
-      "gzipBytes": 84209,
-      "brotliBytes": 65667
+      "sha256": "99e19d86de2756ae1a1ef67c03ccf065a11708c455d6be070341d4d1f0b15a53",
+      "rawBytes": 79169,
+      "minifiedBytes": 53547,
+      "gzipBytes": 14214,
+      "brotliBytes": 12612
     },
     {
       "id": "bitmap-baker-wasm",
@@ -128,7 +128,7 @@
     },
     {
       "id": "mtsdf-generator-js",
-      "label": "MTSDF generator host JS",
+      "label": "MSDF generator host JS",
       "status": "measured",
       "format": "javascript",
       "sha256": "996b884783be8b708e186ae2fe4a062b856a6e48f30b7044f3c07939b2aacdf0",
@@ -139,7 +139,7 @@
     },
     {
       "id": "mtsdf-generator-wasm",
-      "label": "MTSDF admitted generator kernel",
+      "label": "MSDF admitted generator kernel",
       "status": "measured",
       "format": "wasm",
       "sha256": "f2bf6ac11a7c1ac235bf03c3759aa44998a3a3464cc7f4ef6b067bf0b87ce43a",
@@ -150,7 +150,7 @@
     },
     {
       "id": "mtsdf-baker-wasm",
-      "label": "MTSDF fixed baker Wasm",
+      "label": "MSDF fixed baker Wasm",
       "status": "measured",
       "format": "wasm",
       "sha256": "ec6eb1640d587ba8ce9b614aa334c7a93b4a5c36a6c12ee1dba725d7adce7de8",
@@ -161,14 +161,14 @@
     },
     {
       "id": "mtsdf-baker-js",
-      "label": "MTSDF fixed baker host JS",
+      "label": "MSDF fixed baker host JS",
       "status": "measured",
       "format": "javascript",
-      "sha256": "dbfcac1fcf1335124938efe1d6526b2521c1b238eb18a640658bd9013492c865",
-      "rawBytes": 26940,
-      "minifiedBytes": 19117,
-      "gzipBytes": 5530,
-      "brotliBytes": 4908
+      "sha256": "fd2140ee7f48c10e41be0f132e01712b2f3b44186f0561c41cbe013fb763b5ae",
+      "rawBytes": 26924,
+      "minifiedBytes": 19112,
+      "gzipBytes": 5531,
+      "brotliBytes": 4907
     },
     {
       "id": "slug-baker-wasm",
@@ -219,11 +219,11 @@
       "label": "Unicode 17 analysis JS",
       "status": "measured",
       "format": "javascript",
-      "sha256": "6b00639c8e68585691bfe19714f98aa845276b9aef1fa3fe1541c49f8a97c4fb",
-      "rawBytes": 164786,
-      "minifiedBytes": 139936,
-      "gzipBytes": 42047,
-      "brotliBytes": 30989
+      "sha256": "7b4320ddbb5d713a92337daa13f762ef9f56ba3e2bb0ffd3ef2354a702d8a1d7",
+      "rawBytes": 167796,
+      "minifiedBytes": 141127,
+      "gzipBytes": 42406,
+      "brotliBytes": 31287
     }
   ]
 }

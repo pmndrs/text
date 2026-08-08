@@ -5,7 +5,7 @@ description: Provides the shared interactive and automated benchmark product sur
 resource: ../../apps/benchmarks
 workspace_package: '@pmndrs/text-benchmarks'
 documentation_type: reference
-source_digest: 'sha256:37ba2404b7731d266f117f25353a23879d739b0ec3aa4f84f6d17d47a58a0297'
+source_digest: 'sha256:79e8650499e9764b5e7449d16ca6446f60caaef77c8b53ac08fc2901cfd10985'
 tags: [package, benchmarks, react, vite, product-e2e]
 sources:
   - id: manifest
@@ -37,7 +37,10 @@ sources:
     title: Typed fixture delivery request and result contract
   - id: benchmark-runtime-font-assets
     resource: ../../apps/benchmarks/src/workloads/font-assets/runtime.ts
-    title: Public FontLoader runtime source-font path
+    title: Target-v1 FontLoader ownership, source-font path, and delivery instrumentation
+  - id: runtime-fallback-parity-probe
+    resource: ../../apps/benchmarks/vitexec/runtime-fallback-parity.probe.ts
+    title: Baked and runtime delivery parity probe
   - id: slug-role-scenes
     resource: ../../apps/benchmarks/src/benchmark/targets/conformance/raster/slug-role-scenes.ts
     title: Slug release-role scene definitions
@@ -68,6 +71,21 @@ sources:
   - id: react-text-product-target
     resource: ../../apps/benchmarks/src/benchmark/targets/product/react-text.ts
     title: React Text reconciliation product target
+  - id: v1-bitmap-proof
+    resource: ../../apps/benchmarks/src/v1-bitmap-proof.ts
+    title: Target-v1 retained Bitmap browser proof
+  - id: v1-mtsdf-proof
+    resource: ../../apps/benchmarks/src/v1-mtsdf-proof.ts
+    title: Target-v1 retained MTSDF browser proof
+  - id: v1-slug-proof
+    resource: ../../apps/benchmarks/src/v1-slug-proof.ts
+    title: Target-v1 retained Slug browser proof
+  - id: v1-compose-proof
+    resource: ../../apps/benchmarks/src/v1-compose-proof.ts
+    title: Target-v1 composed canonical-shader browser proof
+  - id: v1-async-proof
+    resource: ../../apps/benchmarks/src/v1-async-proof.ts
+    title: Target-v1 Worker synchronization browser proof
   - id: bitmap-text-product-target
     resource: ../../apps/benchmarks/src/benchmark/targets/product/bitmap-text.ts
     title: Finite Bitmap public Text product target
@@ -80,6 +98,9 @@ sources:
   - id: bitmap-finite-scene
     resource: ../../apps/benchmarks/src/benchmark/low-level/raster/bitmap-finite-scene.ts
     title: Shared finite Bitmap scene and exact CPU-reference capture
+  - id: bitmap-conformance-line
+    resource: ../../apps/benchmarks/src/techniques/bitmap/conformance-line.ts
+    title: Target-v1 committed Bitmap conformance paragraph
   - id: bitmap-conformance-capture
     resource: ../../apps/benchmarks/src/benchmark/targets/conformance/raster/bitmap-capture.ts
     title: Target-owned finite Bitmap conformance capture
@@ -164,9 +185,9 @@ sources:
   - id: tsl-conformance-target
     resource: ../../apps/benchmarks/src/benchmark/targets/conformance/tsl-baseline.ts
     title: Deterministic TSL renderer conformance target
-  - id: latest-scene-update-queue
-    resource: ../../apps/benchmarks/src/surfaces/benchmark/latest-async-queue.ts
-    title: Latest-value React viewport update coordinator
+  - id: live-text-update-probe
+    resource: ../../apps/benchmarks/scripts/run-live-update-latency-probe.mts
+    title: Input-to-visible-frame latency and glyph-transition probe
   - id: conformance-surface
     resource: ../../apps/benchmarks/src/surfaces/conformance/conformance-surface.tsx
     title: Host-borrowing conformance surface hierarchy
@@ -177,13 +198,120 @@ sources:
     resource: ../../apps/benchmarks/vitexec/raster-technique-compare.probe.ts
     title: Realtime comparison product probe
 generated:
-  by: openai-codex/gpt-5.6
-  at: '2026-08-04T20:03:01Z'
+  by: anthropic-claude/opus-5
+  at: '2026-08-08T08:15:00Z'
 ---
 
 # Package reference: `@pmndrs/text-benchmarks`
 
 Status: ✅ Milestone 10 renderer-neutral extensibility and retained Presentation are complete
+
+The application now also contains focused target-v1 browser proofs for Bitmap, MTSDF, Slug, and Worker preparation while
+the full Presentation remains on the explicit merged-v0 harness subpath. Each raster proof renders through the maintained
+Three adapter on native WebGPU and forced WebGL2, mutates the retained text, and asserts draw plus storage identity rather
+than treating first pixels as sufficient evidence. Each raster proof also reports the retained `Text.gpuBytes` and fails
+when a visibly populated draw claims no GPU residency, so the accessor is proven against live engine resources rather than
+a unit fixture. The Worker proof distinguishes call-time snapshots, later desired state, supersession, abort, progress,
+and one reusable module Worker.
+
+A fifth proof covers composition over the exported canonical technique shaders. It renders one paragraph through the
+pre-registered Bitmap program, then through a third-party program that owns its own attributes, geometry, and material and
+composes only its final colour over `bitmapShader`. The verification compares the two passes on the same page rather than
+against a stored golden: an identical lit-pixel set proves the composed program inherited the canonical placement,
+snapping, and coverage, and an empty green channel proves it still emitted its own output.
+
+The finite Bitmap conformance lane now drives that adapter directly. `bitmap-finite-scene` builds its paragraph with the
+target-v1 `Text` and reads the CPU reference from the `LoadedFont` raster data it already holds, which removes the second
+raster load and decode the merged-v0 path performed. A committed `Text` replaces the awaited readiness promise: the
+paragraph is parented, `updateMatrixWorld` reconciles it, and a preparation failure surfaces as a thrown error rather than
+an empty frame. The migrated lane reproduces the CPU compositor in zero mismatched bytes and returns the merged-v0
+full-frame hash `a47930d3…e893` with the same 5,930 lit and 3,473 half-coverage pixels and `[68, 18, 313, 112]` ink
+bounds, so the oracle changed renderer without changing what counts as correct. Both `bitmap-text-webgl2` and
+`source-outline-bitmap-webgl2` consume this scene, so both moved together.
+
+The three live technique scenes moved to target-v1 next. `techniques/{bitmap,mtsdf,slug}/persistent-scene.ts` now build a
+standalone `Text` — an implicit batch of one, deliberately left off `TextGroup` so the single-paragraph adapter path stays
+exercised and their `drawCount` stays directly comparable with merged v0 — from the `LoadedFont` that
+`workloads/font-assets` already produced, commit it by parenting and forcing `updateMatrixWorld`, and read `error` and
+`layout` instead of awaiting readiness. Flat merged-v0 properties become nested `contentBox`, `style`, and `paint`, with
+the paragraph measure expressed as an exact width constraint and the live colour as `#ffffff`, which resolves through the
+same transfer function as the numeric constant it replaces. Because a rejected generation would otherwise leave the failed
+candidate font leased and undisposable, each scene commits through one apply-or-roll-back step that restores the previously
+committed inputs before rethrowing.
+
+Their presentation transitions are now owned by the application. Merged v0 exported `captureBitmapGlyphPositions` and
+`createBitmapGlyphPositionTransition`, which packaged glyph identity matching and interpolation together for Bitmap only.
+Target-v1 core deliberately stops at owned glyph snapshots and topology-guarded displayed-origin writes, so
+`techniques/shared/glyph-origin-transition.ts` reimplements the policy once for all three techniques: it matches glyphs on
+the identity merged v0 used — font handle, glyph id, cluster, exact font size, and occurrence index — interpolates toward
+the shaped origins rather than the current displayed ones, writes through `setGlyphOrigins`, clears the overrides when
+settled, and reports `matchedGlyphs` so the existing viewport telemetry keeps its meaning. Bitmap keeps its host-driven
+progress because its React viewport already animates the timeline; MTSDF and Slug, whose surfaces do not drive progress,
+advance the same smoothstep from their own frame clock and gain the transition they previously lacked.
+
+Whether a reflow may interpolate at all is decided once, in `glyphOriginPolicy`, and keyed to the kind of change rather
+than the technique. That identity keys a glyph on its UTF-16 source cluster, which survives a reflow but says nothing
+about visual order: under bidi, inserting one character reorders a whole run, so a typewriter reveal that kept matching
+slid glyphs across their neighbours toward positions they never travelled through. A change to the source text — or to
+the fixture, script, or features that decide which glyphs the text shapes into — therefore snaps, clearing the overrides
+so the committed layout stays authoritative and reporting zero matches rather than a count it did not animate. Geometry
+and style changes leave the shaped run and its visual order intact, so font size, layout width, anchor, and device pixel
+ratio still interpolate. A snapping reflow also skips `captureGlyphOrigins` entirely, so it never allocates the per-glyph
+map it would not have read. All three viewports publish `data-presentation-transitioned` beside the matched and target
+counts, and the bitmap viewport's host-driven timeline runs only when the scene reports that it transitioned.
+
+The live update itself is synchronous. `update` applies and shapes one generation in the caller's own turn, so an
+ordinary text, font-size, layout-width, anchor, or device-pixel-ratio change is visible on the next frame the host
+draws. The promise belongs on loading: a font fixture whose bytes must be fetched and decoded is staged through
+`loadFontFixture`, which lets a fixture swap load behind text that stays on screen, and `RetainedFontFixtureController`
+splits into that asynchronous `load` and a synchronous transactional `commit`. Nothing in front of `update` coalesces,
+debounces, or defers, because such a queue drops shaping work during continuous animation: the framerate stays pinned
+while the presented paragraph lags the state the surface is already rendering from, which is how an expensive reshape
+stays invisible until someone watches a workload. `probe:live-update-latency` measures that directly from the presented
+canvas, and its typewriter observation opens on the very task that pauses a full-speed reveal, so every further distinct
+frame is the harness still catching up rather than new content.
+
+Every benchmark surface now loads through the target-v1 `FontLoader` and renders through the `/three` adapter; the
+merged-v0 harness subpaths and the dual-shape `BenchmarkFontAsset` bridge that carried unmigrated scenes are gone, so a
+scene reads its registered font from `loaded.font` and its decoded raster from `loaded.data`. A fresh matrix after the
+move rendered all seven workloads visibly for Bitmap, MTSDF, and Slug on WebGPU and forced WebGL2 with one renderer per
+case.
+
+The technique-generic comparison workload layer has now moved off that harness path. `ComparisonWorkloadEntry` holds
+`Text<AnyRasterTechnique>`, and every workload factory receives the `LoadedFont` the shared target-v1 `FontLoader`
+already produced, so no comparison scene names or loads a raster module. Type erasure happens once, at the font:
+`LoadedFont` is covariant in its technique, so a concrete `LoadedFont<typeof bitmap>` widens to
+`LoadedFont<AnyRasterTechnique>` and every `Text`, `TextGroup`, and `TextUpdate` downstream is uniformly erased without a
+cast. Erasing at the `Text` instead does not compile: the `set` method and the `font` accessor make `Text` invariant in
+its technique.
+
+Batching is a per-workload policy on the definition rather than a host-wide rule. Text ladder, Zoom text, Icon grid,
+Off-axis / 3D, Dynamic layout, and Paint & effects mount under one shared `TextGroup`, so every paragraph in the workload
+prepares and packs into a single batch owning one set of GPU resources; Icon grid's recycled icon and label Texts share
+that batch across two font fixtures because both load through the one registry-scoped runtime. Paragraph stress stays
+standalone: it is a single `Text` holding a large repeated-ipsum body, already a batch of one, and keeping it standalone
+holds both adapter paths under test. The group takes a `grow` capacity because a chunked batch would split a paragraph's
+glyph run at each chunk boundary and turn one draw into several.
+
+Batching shares preparation and GPU resources, not draws. Target-v1 emits one mesh per packed glyph run and a run never
+spans paragraphs, so the shared group leaves the draw topology of each paragraph exactly as it was. Measured at the
+settled workload mount, every deterministic cell of the technique-by-backend matrix reports the same `drawCount` before
+and after the move — Text ladder 35 for Bitmap and 19 for MTSDF and Slug, Off-axis / 3D 12 and 1, Dynamic layout 20 and
+3, Paint & effects 18 and 1, Paragraph stress 1,120 and 1, Zoom text 1 throughout. Icon grid is the one workload whose
+count is not comparable between runs because it auto-pans from mount, so its visible window differs by sample instant.
+
+Publication replaced readiness. Target-v1 has no per-`Text` promise: parenting a workload under its batch root and
+calling `updateMatrixWorld` shapes, lays out, and packs it synchronously, after which `layout` is readable and `error` is
+meaningful. A rebuild therefore stages its root off-scene, publishes once, positions from the committed layouts, and only
+then swaps the live scene. The retained font-fixture swap collapsed from an asynchronous two-phase rollback to
+`set({ font })` plus one publication, because the replacement `LoadedFont` is already resolved when the swap begins.
+
+The visible-pixel counts printed by `benchmark:presentation` are not a regression gate. The matrix samples live animated
+scenes at whatever phase the soak happens to end on, and two runs of identical code disagree in roughly half of the 42
+cells — Paragraph stress alone ranged from 25,339 to 40,708 across two untouched merged-v0 runs, because the harness
+animates that workload's own font size and measure. What the matrix proves is its per-case line: all seven workloads
+visible, one renderer per case, across every technique and backend. Deterministic regression evidence lives in the
+headless conformance suite and its stored frame hashes.
 
 The primary product surface is organized for humans by mode, technique, backend, and workload. Benchmark mode is the default live control plane. Conformance mode combines live GPU inspection with finite visual correctness checks; finite CPU-reference work begins only through the explicit run action rather than during workload navigation. Internal target/scenario terms remain runner architecture and do not appear as the primary controls. Figma-backed tokens and components remain design inputs, while the product information architecture may diverge from the wireframe.
 
@@ -200,7 +328,7 @@ Conformance inspection distinguishes retained GPU capacity from submitted logica
 validation walks only `InstancedBufferGeometry.instanceCount`; unused slack records are allocation capacity, not visible
 glyphs or paints.
 
-Font delivery is an explicit benchmark axis. **Baked asset** exercises the normal sibling asset, while **Runtime bake** passes `{ source, baked: null }`, downloads the source font, builds the core font in the serial core-baker Worker, then builds the selected Bitmap or MSDF raster in its serial lazy Worker. The inspector distinguishes the always-loaded runtime/shaper graph from the conditional core and raster baker host, Worker, and Wasm graphs; it reports source download bytes, generated core/raster CPU bytes, bake durations, and atlas GPU memory. The runtime-fallback conformance workload renders both delivery paths through the same public pipeline and requires an exact RGBA frame match. Canonical Inter matched with zero differing bytes for Bitmap and MSDF on the admitted WebGPU product probe; the observed cold MSDF raster bake was roughly 114 seconds on this host and remains an observation, not a portability threshold.
+Font delivery is an explicit benchmark axis. **Baked asset** exercises the normal sibling asset, while **Runtime bake** passes `{ source, runtimeBake }`, downloads the source font, builds the core font in the serial core-baker Worker, then builds the selected Bitmap or MSDF raster in its serial lazy Worker. The inspector distinguishes the always-loaded runtime/shaper graph from the conditional core and raster baker host, Worker, and Wasm graphs; it reports source download bytes, generated core/raster CPU bytes, bake durations, and atlas GPU memory. The runtime-fallback conformance workload renders both delivery paths through the same public pipeline and requires an exact RGBA frame match. The headless conformance suite always runs baked delivery, so `benchmark:runtime-fallback` is the lane that exercises runtime delivery: canonical Inter matched exactly for Bitmap, MTSDF, and Slug on hardware WebGPU, each reporting `1/1 exact` with zero mismatched bytes, zero changed pixels, and zero maximum error. The observed cold MSDF raster bake was roughly 114 seconds on this host and remains an observation, not a portability threshold.
 
 The benchmark manifest exposes only `build`, `dev`, `test`, and `check`. Specialized maintenance files declare their own names, requirements, write behavior, arguments, and runner; the root `pnpm scripts` command validates and indexes that metadata. An ordinary build consumes the checked-in canonical package-size record without rewriting it for the current host. `release:size:generate` is the sole writer, while the test gate measures the current host read-only and enforces the reviewed absolute and cumulative ceilings. `benchmark:presentation` runs every sequential workload through Bitmap, MTSDF, and Slug on WebGPU and forced WebGL2; `benchmark:demo` runs the timed sequence; `benchmark:raster-comparison` owns finite-job recovery; and `benchmark:presentation-performance` records the current complete cadence sweep. Closed milestone experiments and technique-specific performance matrices are retained as results, not executable product gates. The authenticated HarfBuzz freshness gate remains separate from ordinary repository checks because Meson, Ninja, and GLib belong only to that workload. Install the scoped `apps/benchmarks/mise.toml` pins when needed, then run `pnpm scripts run fixture:harfbuzz:provision` and `pnpm scripts run fixture:japanese-showcase:check`. React Doctor remains a manual review tool rather than a package or CI script; when requested, run `mise exec -- pnpm --dir apps/benchmarks dlx react-doctor@0.7.2 . --scope full --blocking warning --verbose --no-supply-chain --no-color`.[^presentation-framerate-sweep]
 
@@ -218,7 +346,7 @@ The maintained all-workloads live probe also owns the Presentation control smoke
 
 Every live benchmark identity resolves through one typed catalog under `apps/benchmarks/src/workloads/`. The catalog owns labels, descriptions, exact Main and Presentation defaults, font policy, controls and ranges, pan/zoom capability, preload policy, and surface kind; URL parsing normalizes an unknown workload inside its selected mode before font or control policy executes. Main and Presentation derive scene descriptions, amount labels, font selection, preload grouping, and pan/zoom capability from that authority rather than repeating workload-ID switches. Benchmark Ipsum and Advanced Shaping keep their authored corpus and timeline in the same workload hierarchy as Text Ladder, Zoom Text, Icon Grid, Off-axis / 3D, Dynamic Layout, Paragraph Stress, and Paint & Effects. They project their complete anchor, direction, feature, fixture, language, measure, text, alignment, glyph expectation, and timeline intent through the small `LiveTextScene` contract; the route only supplies runtime font size and selects a technique adapter. Advanced Shaping derives the font fixture from the authored case itself, preventing the displayed script and fixture from drifting. The seven retained comparison definitions own construction, layout, animation, and retained configuration hooks; no workload-specific dispatch switch remains for those phases. Icon Grid additionally owns one per-mount instance containing virtual-window epochs, pool assignment and recycling, scroll and auto-pan state, frame smoothing, refresh suspension, visibility, and metrics. The host exposes only generic cold pool resize/readiness, scene attachment, and disposal; renderer, canvas, RAF, GPU timer, font transactions, and telemetry history remain route infrastructure. Each workload mount explicitly initializes the shared scene transform, preventing Text Ladder's authored offscreen exit or Icon Grid pan from polluting the next workload. Their technique-invariant content-width, text-style, and color-cycle utilities live below `workloads/shared`; a source-boundary test rejects static or dynamic imports from any workload module back into renderer implementation files.
 
-The root `app.tsx` owns only runner detection, shell Suspense, and URL route selection. Both route branches render the same `routes/harness-route.tsx` component type, preserving one runtime-world identity while `controllers/harness-controller.tsx` owns URL revisions, post-preload transitions, presentation playback, shortcuts, and execution state. Persistent renderer provisioning and exclusive conformance-action adaptation live in `surfaces/harness/persistent-layout.tsx`; Benchmark/Conformance scene composition lives in `surfaces/harness/scene.tsx`; Main and Presentation chrome remains in `components/harness-layout.tsx`; and runtime control binding remains in `components/runtime-controls.tsx`. The three persistent Bitmap, MTSDF, and Slug live-text viewport controllers live under `surfaces/benchmark`, keeping their host lease, warm update queue, loading state, telemetry, and probe contract beside the rendered surface. Their renderer imports remain literal dynamic boundaries: type-only references use `import type`, so the production build retains separate technique chunks rather than pulling renderer implementations into the route entry. Authored scenes load fixtures through `workloads/font-assets`: one discriminated adapter selects only the requested Bitmap, MTSDF, or Slug lane through literal dynamic imports, while each lane uses the public `FontLoader`, `FontRegistry`, raster request, and `@pmndrs/text/runtime-bake` entrypoint. The adapter owns source-font URLs, baked transport URLs, gzip and SHA-256 authentication, runtime progress and delivery metrics, and bounded default registries; renderer modules retain only live GPU lifecycle, configuration, statistics, and compatibility delegates. Direct font-baker imports and Wasm URLs remain prohibited from this workload-facing path. Conformance React composition lives under `surfaces/conformance`: both the retained comparison and finite captures can receive only the host-owned renderer, while executable low-level work lives below `benchmark/targets/conformance`, `benchmark/targets/product`, and `benchmark/targets/measurement`. The realtime MTSDF/Slug comparison, runtime-fallback capture, external raster proof, React reconciliation target, and finite Bitmap/MTSDF/Slug product lifecycles are owned by those explicit target trees rather than `renderer`. The finite product targets accept the runner's renderer and abort signal, lazily load their public `Text` scenes, render deterministic frames, and dispose only resources they own. Shared Bitmap line construction, exact CPU-reference composition, renderer-state restoration, and RGBA8 readback normalization live below `benchmark/low-level/raster`; MTSDF and Slug product scenes remain target-owned because they are executable benchmark examples. Pure CPU raster and source-outline oracles live in the same low-level tree, so renderer-adjacent finite capture code can share primitives without importing executable targets; a source-boundary regression prohibits renderer-to-target dependencies. Advanced Shaping lives in the conformance target hierarchy behind the registry's literal selected-target dynamic import. Bitmap, MTSDF, and Slug conformance dispatch now enters technique-owned target modules rather than live renderer files. MTSDF and Slug sampling plus source-outline targets implement the same warm session contract, preserving `load → capture → dispose` reuse and forwarding the borrowed renderer and abort signal unchanged; Bitmap's thin target wrapper reuses its neutral low-level finite scene. The target modules own CPU comparison, renderer-state restoration, standard visual captures, and Slug role/external-resource proofs; renderer modules retain only live persistent-scene and font/configuration infrastructure. The targets share the explicitly named `targets/shared/direct-wasm.ts` dependency adapter only after target selection. The public missing-sibling loader Worker is conformance because it proves authenticated Worker bytes and loader fallback behavior; it is not a rendering product target. Boundary tests reject workload imports back into renderer implementation, reject renderer imports of executable targets, authenticate literal selected-target imports, preserve selected-technique asset chunks, and reject direct font-baker or Wasm URL imports outside the shared adapter, preventing raw tooling from leaking into the normal Presentation module graph.
+The root `app.tsx` owns only runner detection, shell Suspense, and URL route selection. Both route branches render the same `routes/harness-route.tsx` component type, preserving one runtime-world identity while `controllers/harness-controller.tsx` owns URL revisions, post-preload transitions, presentation playback, shortcuts, and execution state. Persistent renderer provisioning and exclusive conformance-action adaptation live in `surfaces/harness/persistent-layout.tsx`; Benchmark/Conformance scene composition lives in `surfaces/harness/scene.tsx`; Main and Presentation chrome remains in `components/harness-layout.tsx`; and runtime control binding remains in `components/runtime-controls.tsx`. The three persistent Bitmap, MTSDF, and Slug live-text viewport controllers live under `surfaces/benchmark`, keeping their host lease, synchronous update path, staged font-fixture loading, loading state, telemetry, and probe contract beside the rendered surface. Their renderer imports remain literal dynamic boundaries: type-only references use `import type`, so the production build retains separate technique chunks rather than pulling renderer implementations into the route entry. Authored scenes load fixtures through `workloads/font-assets`: one discriminated adapter selects only the requested Bitmap, MTSDF, or Slug lane through literal dynamic imports, while each lane loads its fixture exactly once through the target-v1 `FontLoader` from `@pmndrs/text/three`, using the public raster technique and `@pmndrs/text/runtime-bake` entrypoint. Baked delivery authenticates the artifact first and then publishes those bytes as a blob URL, because `LoadedFontInput` names URLs rather than bytes; runtime delivery passes the measured core baker as the request's `runtimeBake`. Because the loader registers into the registry the caller supplies, `BenchmarkFontAsset.font` is a projection of `loaded.font` rather than a second registration, and the retained merged-v0 `raster` module resolves the raster key the load already attached instead of baking again. Loads that name no registry share one `THREE.LoadingManager`, so their fonts share one text runtime as a paragraph batch requires; each caller-supplied registry keeps its own manager, runtime, and loader, preserving the ownership isolation those surfaces already had. The adapter owns source-font URLs, baked transport URLs, gzip and SHA-256 authentication, and runtime progress and delivery metrics; renderer modules retain only live GPU lifecycle, configuration, statistics, and compatibility delegates. Delivery metrics instrument the technique's runtime baker through a clone, which still renders because the Three program registry resolves programs by stable technique ID rather than object identity. Direct font-baker imports and Wasm URLs remain prohibited from this workload-facing path. Conformance React composition lives under `surfaces/conformance`: both the retained comparison and finite captures can receive only the host-owned renderer, while executable low-level work lives below `benchmark/targets/conformance`, `benchmark/targets/product`, and `benchmark/targets/measurement`. The realtime MTSDF/Slug comparison, runtime-fallback capture, external raster proof, React reconciliation target, and finite Bitmap/MTSDF/Slug product lifecycles are owned by those explicit target trees rather than `renderer`. The finite product targets accept the runner's renderer and abort signal, lazily load their public `Text` scenes, render deterministic frames, and dispose only resources they own. Shared Bitmap line construction, exact CPU-reference composition, renderer-state restoration, and RGBA8 readback normalization live below `benchmark/low-level/raster`; MTSDF and Slug product scenes remain target-owned because they are executable benchmark examples. Pure CPU raster and source-outline oracles live in the same low-level tree, so renderer-adjacent finite capture code can share primitives without importing executable targets; a source-boundary regression prohibits renderer-to-target dependencies. Advanced Shaping lives in the conformance target hierarchy behind the registry's literal selected-target dynamic import. Bitmap, MTSDF, and Slug conformance dispatch now enters technique-owned target modules rather than live renderer files. MTSDF and Slug sampling plus source-outline targets implement the same warm session contract, preserving `load → capture → dispose` reuse and forwarding the borrowed renderer and abort signal unchanged; Bitmap's thin target wrapper reuses its neutral low-level finite scene. The target modules own CPU comparison, renderer-state restoration, standard visual captures, and Slug role/external-resource proofs; renderer modules retain only live persistent-scene and font/configuration infrastructure. The targets share the explicitly named `targets/shared/direct-wasm.ts` dependency adapter only after target selection. The public missing-sibling loader Worker is conformance because it proves authenticated Worker bytes and loader fallback behavior; it is not a rendering product target. Boundary tests reject workload imports back into renderer implementation, reject renderer imports of executable targets, authenticate literal selected-target imports, preserve selected-technique asset chunks, and reject direct font-baker or Wasm URL imports outside the shared adapter, preventing raw tooling from leaking into the normal Presentation module graph.
 
 The external raster product proof renders a competing transparent cover and public `Text` under different parent Groups on
 WebGPU and WebGL2. Framebuffer differences prove that the composite Text and neutral plugin batch preserve the caller-owned
@@ -260,7 +388,7 @@ GitHub CI uses the Ubuntu runner's rolling system Chromium as a deliberate compa
 
 The independent package-size lane measures the initial public browser graph, lazy font validator, runtime Worker boundary, baker and shaper JavaScript/Wasm, and Unicode 17 analysis without zero-byte placeholders. Static entry closures and dynamic chunks are separated from Rollup metadata rather than conflated; the browser-core lane externalizes the package's declared `three`, React, and R3F peers, and package-owned Wasm URLs are externalized from JavaScript measurements regardless of their owning package. The report records its measurement platform and architecture plus the SHA-256 identity of each measured payload: minified bundle bytes for JavaScript and emitted module bytes for Wasm. Same-host regeneration is exact; every foreign-host raw/minified/gzip/Brotli result must satisfy the shared reviewed budget table because native Rust/Binaryen and Rolldown output has small cross-architecture byte variance. Coverage-capability growth is independently bounded against its pre-coverage baseline, and foreign-host failures report the measured payload, reviewed ceiling, and exceeded dimensions. The product inspector's selected-runtime total is the gzip transfer sum of the selected raster runtime graph and separately emitted shaper Wasm. The raster graph already contains the shared core and shaper JavaScript host, so adding the independent browser-core or text-shaper-JavaScript measurements would double-count code. Selected runtime and conditional runtime-bake totals are default-collapsed disclosures; their component rows remain available on demand without displacing the separate font-asset total. The font-asset card reports only one transport quantity: gzip bytes for compressed MTSDF artifacts and exact transferred bytes for uncompressed Bitmap/runtime-source assets. Decoded container, raster, and GPU allocation sizes never appear as children of that transfer total; GPU texture allocation remains isolated in the resource card. Each full row is the interaction target, while fixed label, status, and byte columns use a neutral centered chevron, a green check for loaded code, and a gray X for unloaded code. The total intentionally excludes external Three.js, React, and R3F peers plus font assets; those assets remain separate rows rather than being mislabeled as a complete application bundle.
 
-The current Darwin arm64 record reports a 258,037 minified / 74,457 gzip / 57,290 Brotli peer-externalized browser graph and an independently measured 139,936 / 42,047 / 30,989 Unicode analysis graph. The validator, runtime host, runtime Worker JavaScript, portable baker JavaScript, baker Wasm, shaper JavaScript, and shaper Wasm report 584,479, 9,524, 8,936, 6,077, 422,538, 36,966, and 680,312 minified/raw bytes respectively. The configurable MTSDF baker host measures 19,117 minified / 5,530 gzip / 4,908 Brotli bytes and its coverage-capable full Wasm measures 552,025 raw bytes; the reviewed host ceiling includes authenticated quality and coverage policy. The exact-distance-outline removal experiment measured Slug's isolated runtime graph falling from 288,338 to 278,977 minified bytes, from 83,445 to 81,151 gzip bytes, and from 64,856 to 63,013 Brotli bytes on its original same-host comparison. The render-order-capable Bitmap, MTSDF, and Slug runtime closures now measure 287,345 / 82,263 / 63,964, 291,509 / 83,717 / 65,318, and 292,301 / 84,209 / 65,667 minified/gzip/Brotli bytes. Slug's baker host measures 12,913 / 4,129 / 3,680 and its Wasm measures 465,046 raw / 186,683 gzip / 146,720 Brotli bytes. Bitmap-only and MTSDF-only size entries inspect their initial module closures and fail if Slug runtime, shader, baker, or runtime-baker modules enter either graph. Paragraph layout hashes and the policy composite hash share one implementation over the actual normalized layouts; the generator, benchmark target, unit tests, and Vitexec probes no longer maintain parallel digest logic.
+The current Darwin arm64 record reports a 258,370 minified / 74,531 gzip / 57,310 Brotli peer-externalized browser graph and an independently measured 139,936 / 42,047 / 30,989 Unicode analysis graph. The first target-v1 technique contract adds 613 raw / 333 minified / 74 gzip / 20 Brotli bytes to browser core. Splitting renderer-neutral atlas decoding from Three realization changes the Bitmap closure by +491 / +242 / +47 / +16 and the MTSDF closure by −678 / −550 / −168 / −233 raw/minified/gzip/Brotli bytes; Slug is byte-identical. The validator, runtime host, runtime Worker JavaScript, portable baker JavaScript, baker Wasm, shaper JavaScript, and shaper Wasm report 584,479, 9,524, 8,936, 6,077, 422,538, 36,966, and 680,312 minified/raw bytes respectively. The configurable MTSDF baker host measures 19,117 minified / 5,530 gzip / 4,908 Brotli bytes and its coverage-capable full Wasm measures 552,025 raw bytes; the reviewed host ceiling includes authenticated quality and coverage policy. The exact-distance-outline removal experiment measured Slug's isolated runtime graph falling from 288,338 to 278,977 minified bytes, from 83,445 to 81,151 gzip bytes, and from 64,856 to 63,013 Brotli bytes on its original same-host comparison. The current Bitmap, MTSDF, and Slug runtime closures measure 287,587 / 82,310 / 63,980, 290,959 / 83,549 / 65,085, and 292,301 / 84,209 / 65,667 minified/gzip/Brotli bytes. Slug's baker host measures 12,913 / 4,129 / 3,680 and its Wasm measures 465,046 raw / 186,683 gzip / 146,720 Brotli bytes. Bitmap-only and MTSDF-only size entries inspect their initial module closures and fail if Slug runtime, shader, baker, or runtime-baker modules enter either graph. Paragraph layout hashes and the policy composite hash share one implementation over the actual normalized layouts; the generator, benchmark target, unit tests, and Vitexec probes no longer maintain parallel digest logic.
 
 The local Worker-queue Vitexec probe authenticates every output and reports observations rather than asserting machine-sensitive timing. Two Chromium runs measured a three-font queued burst at 30.8–32.0 ms and three separately initialized sequential Workers at 68.3–88.6 ms. The correctness suite separately proves one active post, FIFO completion, queued cancellation, and active-cancellation recovery without timers. The combined live lane runs its performance observation before interaction and conformance probes so accumulated renderer work cannot contaminate cold/steady telemetry.
 

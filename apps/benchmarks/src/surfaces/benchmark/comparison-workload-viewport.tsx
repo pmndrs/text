@@ -5,6 +5,7 @@ import type { RuntimeLiveStats } from '../../benchmark/runtime-world';
 import type { FontDelivery, GraphicsBackend, RasterTechnique } from '../../benchmark/url-state';
 import type { PresentationPreset } from '../../benchmark/presentation-sequence';
 import { BENCHMARK_CONTENT_INSET, BENCHMARK_CONTENT_MINIMUM_VIEWPORT_WIDTH } from '../../workloads/shared/text-style';
+
 import { benchmarkWorkloadDefinition } from '../../workloads/catalog';
 import type {
   ComparisonWorkloadConfiguration,
@@ -313,6 +314,9 @@ export function ComparisonWorkloadViewport({
   useEffect(() => {
     const preview = previewRef.current;
     if (preview === undefined) return;
+    // Applied immediately. The paragraph-stress motion drives width and font size through this same path on its own
+    // animation frames, so delaying here would stall the workload rather than settle an input. Debouncing belongs on
+    // the controls a person drags, not on the path an animation shares with them.
     void preview.update(currentConfiguration()).catch(publishError);
   }, [
     amount,

@@ -198,10 +198,15 @@ function slugTextValidation(values: readonly import('./contracts').BenchmarkMeas
       metrics.distinctRgbColors < 4 ||
       metrics.artifactBytes !== 3_444_916 ||
       metrics.compressedArtifactBytes !== 618_487 ||
-      !finitePositive(metrics.slugCurveGpuBytes) ||
-      !finitePositive(metrics.slugHeaderGpuBytes) ||
-      !finitePositive(metrics.slugReferenceGpuBytes) ||
-      metrics.slugGpuBytes !== metrics.slugCurveGpuBytes + metrics.slugHeaderGpuBytes + metrics.slugReferenceGpuBytes ||
+      !finitePositive(metrics.slugCurveBytes) ||
+      !finitePositive(metrics.slugHeaderBytes) ||
+      !finitePositive(metrics.slugReferenceBytes) ||
+      !finitePositive(metrics.slugResourceBytes) ||
+      // The technique reports what it decoded and the Three targets report what they uploaded, so a renderer that
+      // retains less than the decoded pages has lost a page rather than merely repacked one. Comparing the decoded
+      // subtotals against their own sum would only restate the app's arithmetic, so that check is gone.
+      !finitePositive(metrics.slugGpuBytes) ||
+      metrics.slugGpuBytes < metrics.slugResourceBytes ||
       metrics.renderTargetGpuBytes !== value.outputBytes ||
       !finiteNonnegative(metrics.fontLoadMs) ||
       !finiteNonnegative(metrics.firstDrawMs) ||
@@ -345,15 +350,19 @@ function paragraphLayoutValidation(values: readonly import('./contracts').Benchm
     if (
       value.hash !== 'bb15bbcc:4f111a3f:e8c0e9d5' ||
       value.metrics?.shapeBoundaryCrossings !== 1 ||
-      value.metrics.reshapeBoundaryCrossings !== 2 ||
+      // Zero, because boundary reshaping requested the whole run as context and so returned the glyphs the retained
+      // shape already held. The pinned hash above is unchanged by removing it, which is the proof.
+      value.metrics.reshapeBoundaryCrossings !== 0 ||
       value.metrics.batchedBoundaryLayouts !== 2 ||
       value.metrics.layoutCount !== 3 ||
       value.metrics.glyphCount !== 165
     ) {
-      throw new Error('Paragraph layout sample did not preserve its exact SoA and batch contract');
+      throw new Error(
+        `Paragraph layout sample did not preserve its exact SoA and batch contract: hash=${value.hash} shape=${String(value.metrics?.shapeBoundaryCrossings)} reshape=${String(value.metrics?.reshapeBoundaryCrossings)} batched=${String(value.metrics?.batchedBoundaryLayouts)} layouts=${String(value.metrics?.layoutCount)} glyphs=${String(value.metrics?.glyphCount)}`,
+      );
     }
   }
-  return `${values.length}/${values.length} exact positioned outputs · 1 reshape batch/changed width`;
+  return `${values.length}/${values.length} exact positioned outputs · no reshape crossings`;
 }
 
 function paragraphPolicyValidation(values: readonly import('./contracts').BenchmarkMeasurement[]): string {
@@ -366,9 +375,11 @@ function paragraphPolicyValidation(values: readonly import('./contracts').Benchm
       value.metrics.uikitMeasurementCount !== 25 ||
       value.metrics.uikitLayoutCount !== 1 ||
       value.metrics.shapeBoundaryCrossings !== 4 ||
-      value.metrics.reshapeBoundaryCrossings !== 5
+      value.metrics.reshapeBoundaryCrossings !== 0
     ) {
-      throw new Error('Paragraph policy sample did not preserve its bidi, policy, and uikit contract');
+      throw new Error(
+        `Paragraph policy sample did not preserve its bidi, policy, and uikit contract: hash=${value.hash} shape=${String(value.metrics?.shapeBoundaryCrossings)} reshape=${String(value.metrics?.reshapeBoundaryCrossings)}`,
+      );
     }
   }
   return `${values.length}/${values.length} exact bidi/policy outputs · current-uikit-shaped flow`;
@@ -439,6 +450,93 @@ function advancedShapingValidation(values: readonly import('./contracts').Benchm
   return `${values.length}/${values.length} exact advanced-shaping timelines · ${frameCount} frames/sample`;
 }
 
+/**
+ * The composed paragraph's exact span evidence.
+ *
+ * Each pin answers one question that the others cannot. Glyph-id changes prove the shaper honoured a span; origin
+ * changes with unchanged ids prove a span altered metrics without altering selection; the line-count and first-break
+ * pins prove a size span reached line breaking rather than only advances; the slot pins prove a font span reached the
+ * shaper's font selection; and the `.notdef` pin proves the fallback span is what resolved the Devanagari at all.
+ */
+const RICH_TEXT_SPAN_EVIDENCE = {
+  hash: '87c41664',
+  glyphCount: 175,
+  renderedGlyphCount: 149,
+  drawCount: 7,
+  fontHandleCount: 3,
+  distinctFontSizeCount: 4,
+  spanCount: 8,
+  caseCount: 7,
+  smallCapsChangedGlyphs: 5,
+  trackingMovedOrigins: 12,
+  emphasisMovedOrigins: 101,
+  lineCount: 3,
+  bodySizeEmphasisLineCount: 2,
+  emphasisFirstLineTextEnd: 74,
+  bodySizeEmphasisFirstLineTextEnd: 87,
+  faceSpanSlotGlyphs: 6,
+  fallbackSpanSlotGlyphs: 8,
+  fallbackMissingGlyphsWithoutSpan: 8,
+  accentPaintGlyphs: 32,
+  tintPaintGlyphs: 3,
+  paragraphPaintGlyphs: 114,
+  nestedGlyphCount: 9,
+} as const;
+
+/**
+ * Glyphs the nested style-only span loses to the paragraph paint instead of inheriting from the span that encloses it.
+ *
+ * This was 9 while paint resolved by taking the innermost covering span's `paint` whole, so a span stating no paint
+ * fell through to the paragraph paint rather than to the span enclosing it — contradicting the README. It reached `0`
+ * when one span cascade began resolving every property by containment for both shaping and paint, and those nine
+ * glyphs moved from `paragraphPaintGlyphs` into `accentPaintGlyphs`. Keep the pin: a regression would raise it again.
+ */
+const NESTED_SPAN_PAINT_CASCADE_DELTA = 0;
+
+function richTextSpanValidation(values: readonly import('./contracts').BenchmarkMeasurement[]): string {
+  deterministicValidation(values.map((value) => value.hash));
+  for (const value of values) {
+    const metrics = value.metrics;
+    if (metrics === undefined) throw new Error('Rich text span conformance reported no metrics');
+    for (const [key, expected] of Object.entries(RICH_TEXT_SPAN_EVIDENCE)) {
+      if (key === 'hash') continue;
+      if (metrics[key] !== expected) {
+        throw new Error(
+          `Rich text span conformance changed ${key}: ${String(metrics[key])} instead of ${String(expected)}`,
+        );
+      }
+    }
+    if (value.hash !== RICH_TEXT_SPAN_EVIDENCE.hash) {
+      throw new Error(
+        `Rich text span conformance changed its composed shaping and paint evidence: ${value.hash} instead of ${RICH_TEXT_SPAN_EVIDENCE.hash}`,
+      );
+    }
+    if (
+      // A feature span must re-select glyphs only inside its own range.
+      metrics.smallCapsChangedGlyphsOutside !== 0 ||
+      // Tracking and size must move metrics without re-selecting a single glyph.
+      metrics.trackingChangedGlyphs !== 0 ||
+      metrics.emphasisChangedGlyphs !== 0 ||
+      // Dropping a font span must return its range to the body face's slot.
+      metrics.faceSpanSlotGlyphsWithoutSpan !== 0 ||
+      metrics.fallbackFontHandleCountWithoutSpan !== 2 ||
+      // The composed paragraph must resolve every glyph and account for every drawn instance.
+      metrics.missingGlyphCount !== 0 ||
+      (metrics.accentPaintGlyphs ?? 0) + (metrics.tintPaintGlyphs ?? 0) + (metrics.paragraphPaintGlyphs ?? 0) !==
+        metrics.renderedGlyphCount
+    ) {
+      throw new Error('Rich text span conformance did not preserve its composed-span contract');
+    }
+    if (metrics.nestedPaintDelta !== NESTED_SPAN_PAINT_CASCADE_DELTA) {
+      throw new Error(
+        `Nested style-only span paint inheritance changed: ${String(metrics.nestedPaintDelta)} glyphs lost to the paragraph paint instead of ${String(NESTED_SPAN_PAINT_CASCADE_DELTA)}`,
+      );
+    }
+  }
+  const nestedPaint = NESTED_SPAN_PAINT_CASCADE_DELTA > 0 ? 'resets' : 'inherits';
+  return `${values.length}/${values.length} exact composed-span paragraphs · ${String(RICH_TEXT_SPAN_EVIDENCE.caseCount)} controls · nested paint ${nestedPaint}`;
+}
+
 function finiteNonnegative(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
@@ -482,6 +580,14 @@ export const scenarios: readonly BenchmarkScenario[] = [
     description: 'Every authored Latin, Arabic, Devanagari, bidi, and CJK frame through public Text.',
     requiredCapabilities: new Set(['deterministic', 'shaping', 'paragraph', 'raster']),
     validate: advancedShapingValidation,
+  },
+  {
+    id: 'rich-text-spans-conformance',
+    label: 'Rich text span conformance',
+    description:
+      'Composed spans carrying features, tracking, size, face, fallback, nesting, and paint through public Text.',
+    requiredCapabilities: new Set(['deterministic', 'shaping', 'paragraph', 'raster']),
+    validate: richTextSpanValidation,
   },
   {
     id: 'react-text-reconciliation',

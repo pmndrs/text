@@ -13,7 +13,7 @@ sources:
     resource: ../../packages/text/src/raster/msdf.ts
     title: MTSDF runtime material and paint implementation
   - id: text-runtime
-    resource: ../../packages/text/src/text.ts
+    resource: ../../packages/text/src/three/text.ts
     title: Framework-neutral Text lifecycle
   - id: tsl-skill
     resource: ../../.agents/skills/tsl/SKILL.md

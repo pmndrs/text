@@ -89,7 +89,7 @@ test('Bitmap and MSDF runtime bakers execute through lazy module Workers', async
 
   const font = { glyphCount: 7, shapingHash };
   const source = Uint8Array.from([9, 8, 7]);
-  const bitmapModule = bitmap({ strikes: [16] }).module;
+  const bitmapModule = bitmap;
   const runtimeBitmapBaker = await bitmapModule.runtimeBaker();
   const bitmapResult = await runtimeBitmapBaker.default.bake({
     source,
@@ -202,7 +202,7 @@ test('bounded runtime cancellation replaces the active Worker and recovers the s
   const source = Uint8Array.of(9, 8, 7);
   const font = { glyphCount: 7, shapingHash };
   const options = { strikes: [16], coverage: { glyphIds: [1, 3] } };
-  const baker = (await bitmap(options).module.runtimeBaker()).default;
+  const baker = (await bitmap.runtimeBaker()).default;
   const controller = new AbortController();
   const cancelled = baker.bake({ source, font, fontFaceIndex: 0, rasterKey, options, signal: controller.signal });
   const recovered = baker.bake({ source, font, fontFaceIndex: 0, rasterKey, options });
@@ -287,7 +287,7 @@ test('the raster Worker entry frees its baker result before transferring exact a
   assert.deepEqual(posted.transfer, [bakerBytes.buffer]);
 });
 
-test('Node and serial Worker entry produce identical bounded Bitmap and MTSDF artifacts', async (t) => {
+test('Node and serial Worker entry produce identical bounded Bitmap and MSDF artifacts', async (t) => {
   const source = new Uint8Array(await readFile(interUrl));
   const font = { source, fontFaceIndex: 0, glyphCount: 2937, shapingHash: interShapingHash };
   for (const fixture of [

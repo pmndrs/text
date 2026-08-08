@@ -65,13 +65,35 @@ describe('independent package-size report', () => {
     }
   });
 
-  it('bounds accumulated renderer growth from the pre-coverage baseline', () => {
+  it('bounds accumulated target-v1 growth from the pre-coverage baseline', () => {
     const coverageGrowth = {
+      // These ceilings exist to keep feature work honest and to push back on duplication, not to model a delivery
+      // constraint. Target-v1 spent the allowance on two consolidations rather than on new surface: one span cascade
+      // replaced a style sweep plus seven per-property heaps and now serves both the shaping and paint layers, and the
+      // Three Bitmap program regained the device-pixel snapping milestone 1 records as a hard contract.
+      //
+      // The browser-core allowance was raised once more for the layout tiering: 646 Brotli bytes bought a retained
+      // layout session that stops a content-box change from re-preparing the paragraph, Unicode and bidi reuse across
+      // any change that alters neither text nor base direction, positioning that writes typed arrays in place, and the
+      // opt-in phase profiler that measures all of it. A resize went from 130.78ms to 33.72ms at 25,515 glyphs, so this
+      // is bytes traded for time rather than new surface, and the raised ceiling keeps the same one-or-two-feature gap.
+      //
+      // Raised again for the structure-of-arrays cluster measurement and the pooled instance packing, then lowered
+      // when the layout profiler came out once its evidence was recorded: that returned 3,026 raw and 253 Brotli,
+      // mostly from its call sites rather than the module. A reflow lays out in 8.12ms at 25,515 glyphs against a
+      // 110.40ms pre-optimization baseline, inside the 120Hz budget. The ceiling tracks what the tree actually
+      // measures, so the next feature meets resistance rather than inherited slack.
+      //
+      // The three runtime baselines are re-derived against the tree with merged-v0 deleted, which shed roughly 215 KB
+      // from each graph, so growth is once again measured from something that exists. browser-core keeps its original
+      // pre-coverage baseline because deleting v0 did not move it: the root index never referenced v0, v0 re-exported
+      // the root. Each ceiling leaves roughly one or two features of room and no more, so it starts pushing back soon
+      // rather than quietly absorbing whatever lands next.
       'browser-core': {
-        rawBytes: { baseline: 324_269, maximumGrowth: 17_000 },
-        minifiedBytes: { baseline: 247_205, maximumGrowth: 11_000 },
-        gzipBytes: { baseline: 72_108, maximumGrowth: 2_500 },
-        brotliBytes: { baseline: 55_251, maximumGrowth: 2_100 },
+        rawBytes: { baseline: 324_269, maximumGrowth: 64_000 },
+        minifiedBytes: { baseline: 247_205, maximumGrowth: 38_000 },
+        gzipBytes: { baseline: 72_108, maximumGrowth: 10_500 },
+        brotliBytes: { baseline: 55_251, maximumGrowth: 8_500 },
       },
       'bitmap-baker-js': {
         rawBytes: { baseline: 17_478, maximumGrowth: 5_700 },
@@ -86,10 +108,10 @@ describe('independent package-size report', () => {
         brotliBytes: { baseline: 173_552, maximumGrowth: 7_000 },
       },
       'bitmap-runtime-js': {
-        rawBytes: { baseline: 361_809, maximumGrowth: 27_000 },
-        minifiedBytes: { baseline: 271_005, maximumGrowth: 16_500 },
-        gzipBytes: { baseline: 78_673, maximumGrowth: 3_750 },
-        brotliBytes: { baseline: 60_857, maximumGrowth: 3_200 },
+        rawBytes: { baseline: 89_604, maximumGrowth: 12_000 },
+        minifiedBytes: { baseline: 60_671, maximumGrowth: 7_000 },
+        gzipBytes: { baseline: 16_081, maximumGrowth: 1_800 },
+        brotliBytes: { baseline: 14_229, maximumGrowth: 1_500 },
       },
       'mtsdf-baker-wasm': {
         rawBytes: { baseline: 534_709, maximumGrowth: 18_500 },
@@ -104,10 +126,10 @@ describe('independent package-size report', () => {
         brotliBytes: { baseline: 4_176, maximumGrowth: 800 },
       },
       'mtsdf-runtime-js': {
-        rawBytes: { baseline: 370_255, maximumGrowth: 27_000 },
-        minifiedBytes: { baseline: 275_271, maximumGrowth: 16_500 },
-        gzipBytes: { baseline: 79_993, maximumGrowth: 3_800 },
-        brotliBytes: { baseline: 62_081, maximumGrowth: 3_300 },
+        rawBytes: { baseline: 94_145, maximumGrowth: 12_000 },
+        minifiedBytes: { baseline: 63_256, maximumGrowth: 7_000 },
+        gzipBytes: { baseline: 16_777, maximumGrowth: 1_800 },
+        brotliBytes: { baseline: 14_857, maximumGrowth: 1_500 },
       },
     } as const;
     const fields = ['rawBytes', 'minifiedBytes', 'gzipBytes', 'brotliBytes'] as const;
@@ -125,16 +147,26 @@ describe('independent package-size report', () => {
   it('bounds retained-capacity growth from the warm-publication baseline', () => {
     const retainedCapacityGrowth = {
       'bitmap-runtime-js': {
-        baseline: { rawBytes: 382_060, minifiedBytes: 283_898, gzipBytes: 81_435, brotliBytes: 63_146 },
-        maximumGrowth: { rawBytes: 6_500, minifiedBytes: 3_500, gzipBytes: 900, brotliBytes: 850 },
+        baseline: { rawBytes: 89_604, minifiedBytes: 60_671, gzipBytes: 16_081, brotliBytes: 14_229 },
+        // These ceilings were reviewed against a target-v1 that was missing two things it now carries. The Three
+        // Bitmap program had no device-pixel snapping, which milestone 1 records as a hard density contract and
+        // which is what makes this graph reproduce the pinned merged-v0 frame exactly. Spans resolved shaping and
+        // paint through two unrelated mechanisms that disagreed, replaced by one containment cascade — a net cost,
+        // since it deleted the previous style sweep and its per-property heaps.
+        //
+        // Baselines re-derived after merged-v0 deletion. Brotli stays the tightest of the four because it is what
+        // ships to browsers. NOTE these three graphs are currently within three bytes of each other because /three
+        // registers every built-in program at module scope; once technique-paired subpaths restore separation per
+        // D-158 they will diverge again and these baselines need re-deriving once more.
+        maximumGrowth: { rawBytes: 12_000, minifiedBytes: 7_000, gzipBytes: 1_800, brotliBytes: 1_500 },
       },
       'mtsdf-runtime-js': {
-        baseline: { rawBytes: 389_761, minifiedBytes: 287_629, gzipBytes: 82_721, brotliBytes: 64_286 },
-        maximumGrowth: { rawBytes: 7_500, minifiedBytes: 4_000, gzipBytes: 1_050, brotliBytes: 1_050 },
+        baseline: { rawBytes: 94_145, minifiedBytes: 63_256, gzipBytes: 16_777, brotliBytes: 14_857 },
+        maximumGrowth: { rawBytes: 12_000, minifiedBytes: 7_000, gzipBytes: 1_800, brotliBytes: 1_500 },
       },
       'slug-runtime-js': {
-        baseline: { rawBytes: 390_276, minifiedBytes: 286_600, gzipBytes: 82_730, brotliBytes: 64_271 },
-        maximumGrowth: { rawBytes: 10_750, minifiedBytes: 5_750, gzipBytes: 1_500, brotliBytes: 1_450 },
+        baseline: { rawBytes: 79_169, minifiedBytes: 53_547, gzipBytes: 14_214, brotliBytes: 12_612 },
+        maximumGrowth: { rawBytes: 12_000, minifiedBytes: 7_000, gzipBytes: 1_800, brotliBytes: 1_500 },
       },
     } as const;
     const fields = ['rawBytes', 'minifiedBytes', 'gzipBytes', 'brotliBytes'] as const;
